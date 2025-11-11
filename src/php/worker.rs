@@ -27,18 +27,10 @@ impl WorkerPool {
         // This prevents "zend_mm_heap corrupted" error when multiple workers
         // try to call php_module_startup() simultaneously
         let (php_module, shared_ffi) = if !php_config.use_fpm {
-            info!("Initializing PHP module (this may take a moment on macOS)...");
-            let module = PhpExecutor::new(php_config.clone())?;  // Calls module_startup() once
+            info!("Initializing PHP module for {} worker(s)...", config.pool_size);
+            let module = PhpExecutor::new(php_config.clone())?;
             let ffi = module.get_shared_ffi();
-
-            // CRITICAL: Ensure PHP is fully initialized before spawning worker threads
-            // Without this, macOS may crash due to incomplete dylib initialization
             info!("PHP module initialized successfully");
-
-            // Add a small delay to ensure all dynamic library initialization is complete
-            // This is especially important on macOS where dylib loading can be asynchronous
-            std::thread::sleep(std::time::Duration::from_millis(100));
-
             (Some(module), ffi)
         } else {
             (None, None)  // PHP-FPM mode doesn't need global initialization
