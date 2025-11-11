@@ -36,17 +36,23 @@ pub struct Server {
 
 impl Server {
     pub async fn new(config: Config) -> Result<Self> {
+        // Use server.workers as the authoritative worker count
+        // This fixes the confusion between server.workers and php.worker_pool_size
+        let actual_worker_count = config.server.workers;
+
+        info!("Configuring {} PHP worker(s)", actual_worker_count);
+
         let php_config = PhpConfig {
             libphp_path: config.php.libphp_path.clone(),
             document_root: config.php.document_root.clone(),
-            worker_pool_size: config.php.worker_pool_size,
+            worker_pool_size: actual_worker_count,  // Use server.workers
             worker_max_requests: config.php.worker_max_requests,
             use_fpm: config.php.use_fpm,
             fpm_socket: config.php.fpm_socket.clone(),
         };
 
         let pool_config = WorkerPoolConfig {
-            pool_size: config.php.worker_pool_size,
+            pool_size: actual_worker_count,  // Use server.workers
             max_requests: config.php.worker_max_requests,
         };
 
