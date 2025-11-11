@@ -3,7 +3,7 @@ use super::ffi::PhpFfi;
 use super::PhpConfig;
 use anyhow::Result;
 use async_channel::{Sender, Receiver, bounded};
-use std::sync::Arc;
+use std::sync::{Arc, Barrier};
 use tokio::task;
 use tracing::{info, warn, error};
 
@@ -27,12 +27,26 @@ impl WorkerPool {
         // This prevents "zend_mm_heap corrupted" error when multiple workers
         // try to call php_module_startup() simultaneously
         let (php_module, shared_ffi) = if !php_config.use_fpm {
+            info!("Initializing PHP module (this may take a moment on macOS)...");
             let module = PhpExecutor::new(php_config.clone())?;  // Calls module_startup() once
             let ffi = module.get_shared_ffi();
+
+            // CRITICAL: Ensure PHP is fully initialized before spawning worker threads
+            // Without this, macOS may crash due to incomplete dylib initialization
+            info!("PHP module initialized successfully");
+
+            // Add a small delay to ensure all dynamic library initialization is complete
+            // This is especially important on macOS where dylib loading can be asynchronous
+            std::thread::sleep(std::time::Duration::from_millis(100));
+
             (Some(module), ffi)
         } else {
             (None, None)  // PHP-FPM mode doesn't need global initialization
         };
+
+        // Create a barrier to synchronize worker thread initialization
+        // This ensures all workers are fully initialized before accepting requests
+        let barrier = Arc::new(Barrier::new(config.pool_size + 1));
 
         // Spawn worker threads
         for worker_id in 0..config.pool_size {
@@ -40,13 +54,17 @@ impl WorkerPool {
             let php_config = php_config.clone();
             let max_requests = config.max_requests;
             let shared_ffi = shared_ffi.clone();
+            let barrier = Arc::clone(&barrier);
 
             task::spawn_blocking(move || {
-                Self::worker_thread(worker_id, request_rx, php_config, max_requests, shared_ffi);
+                Self::worker_thread(worker_id, request_rx, php_config, max_requests, shared_ffi, barrier);
             });
         }
 
-        info!("Started PHP worker pool with {} workers", config.pool_size);
+        // Wait for all workers to initialize
+        info!("Waiting for {} workers to initialize...", config.pool_size);
+        barrier.wait();
+        info!("All PHP workers initialized and ready");
 
         Ok(Self {
             request_tx,
@@ -62,18 +80,29 @@ impl WorkerPool {
         php_config: PhpConfig,
         max_requests: usize,
         shared_ffi: Option<Arc<PhpFfi>>,
+        barrier: Arc<Barrier>,
     ) {
-        info!("Worker {} started", worker_id);
+        info!("Worker {} starting initialization...", worker_id);
 
         // Initialize PHP executor for this worker
         // Use new_worker() with shared PhpFfi instance (no need to load library or call module_startup)
         let executor = match PhpExecutor::new_worker(php_config, shared_ffi) {
-            Ok(exec) => exec,
+            Ok(exec) => {
+                info!("Worker {} initialized successfully", worker_id);
+                exec
+            }
             Err(e) => {
                 error!("Worker {} failed to initialize PHP: {}", worker_id, e);
+                // Still wait at barrier to avoid deadlock
+                barrier.wait();
                 return;
             }
         };
+
+        // Wait for all workers to initialize before processing requests
+        // This prevents race conditions during startup
+        barrier.wait();
+        info!("Worker {} ready to accept requests", worker_id);
 
         let mut requests_handled = 0;
 

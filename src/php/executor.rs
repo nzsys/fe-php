@@ -43,8 +43,19 @@ impl PhpExecutor {
             (None, Some(FastCgiClient::new(config.fpm_socket.clone())))
         } else {
             // Use libphp and initialize PHP module
+            tracing::info!("Loading PHP library from {:?}", config.libphp_path);
             let ffi = PhpFfi::load(&config.libphp_path)?;
-            ffi.module_startup()?;
+
+            tracing::info!("Starting PHP module initialization...");
+            ffi.module_startup()
+                .context("PHP module startup failed - check PHP installation and configuration")?;
+
+            tracing::info!("PHP module startup completed successfully");
+
+            // Give the system a moment to complete all initialization
+            // This is especially important on macOS where dylib initialization can be async
+            std::thread::sleep(std::time::Duration::from_millis(50));
+
             (Some(Arc::new(ffi)), None)
         };
 
