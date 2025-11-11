@@ -15,6 +15,12 @@ pub struct Config {
     pub waf: WafConfig,
     #[serde(default)]
     pub admin: AdminConfig,
+    #[serde(default)]
+    pub tls: TlsConfig,
+    #[serde(default)]
+    pub redis: RedisConfig,
+    #[serde(default)]
+    pub upstream: UpstreamConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -81,6 +87,8 @@ pub struct WafConfig {
     pub rules_path: Option<PathBuf>,
     #[serde(default)]
     pub rate_limit: RateLimitConfig,
+    #[serde(default)]
+    pub geoip: GeoIpConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -103,6 +111,74 @@ pub struct AdminConfig {
     pub http_port: u16,
     #[serde(default = "default_allowed_ips")]
     pub allowed_ips: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TlsConfig {
+    #[serde(default)]
+    pub enable: bool,
+    #[serde(default)]
+    pub cert_path: Option<PathBuf>,
+    #[serde(default)]
+    pub key_path: Option<PathBuf>,
+    #[serde(default = "default_true")]
+    pub http2: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GeoIpConfig {
+    #[serde(default)]
+    pub enable: bool,
+    #[serde(default)]
+    pub database_path: Option<PathBuf>,
+    #[serde(default = "default_allowed_countries")]
+    pub allowed_countries: Vec<String>,
+    #[serde(default = "default_blocked_countries")]
+    pub blocked_countries: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RedisConfig {
+    #[serde(default)]
+    pub enable: bool,
+    #[serde(default = "default_redis_url")]
+    pub url: String,
+    #[serde(default = "default_session_ttl")]
+    pub session_ttl: u64,
+    #[serde(default = "default_redis_pool_size")]
+    pub pool_size: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpstreamConfig {
+    #[serde(default)]
+    pub enable: bool,
+    #[serde(default = "default_servers")]
+    pub servers: Vec<UpstreamServer>,
+    #[serde(default = "default_lb_strategy")]
+    pub load_balancing_strategy: String,
+    #[serde(default)]
+    pub circuit_breaker: CircuitBreakerConfig,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpstreamServer {
+    pub host: String,
+    pub port: u16,
+    #[serde(default = "default_upstream_weight")]
+    pub weight: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CircuitBreakerConfig {
+    #[serde(default = "default_true")]
+    pub enable: bool,
+    #[serde(default = "default_failure_threshold")]
+    pub failure_threshold: u32,
+    #[serde(default = "default_success_threshold")]
+    pub success_threshold: u32,
+    #[serde(default = "default_timeout_seconds")]
+    pub timeout_seconds: u64,
 }
 
 // Default values
@@ -182,6 +258,50 @@ fn default_allowed_ips() -> Vec<String> {
     vec!["127.0.0.1".to_string()]
 }
 
+fn default_allowed_countries() -> Vec<String> {
+    vec![]
+}
+
+fn default_blocked_countries() -> Vec<String> {
+    vec![]
+}
+
+fn default_redis_url() -> String {
+    "redis://127.0.0.1:6379".to_string()
+}
+
+fn default_session_ttl() -> u64 {
+    3600 // 1 hour
+}
+
+fn default_redis_pool_size() -> u32 {
+    10
+}
+
+fn default_servers() -> Vec<UpstreamServer> {
+    vec![]
+}
+
+fn default_lb_strategy() -> String {
+    "round_robin".to_string()
+}
+
+fn default_upstream_weight() -> u32 {
+    1
+}
+
+fn default_failure_threshold() -> u32 {
+    5
+}
+
+fn default_success_threshold() -> u32 {
+    2
+}
+
+fn default_timeout_seconds() -> u64 {
+    60
+}
+
 impl Default for OpcacheConfig {
     fn default() -> Self {
         Self {
@@ -210,6 +330,7 @@ impl Default for WafConfig {
             mode: default_waf_mode(),
             rules_path: None,
             rate_limit: RateLimitConfig::default(),
+            geoip: GeoIpConfig::default(),
         }
     }
 }
@@ -221,6 +342,61 @@ impl Default for AdminConfig {
             unix_socket: default_admin_socket(),
             http_port: default_admin_port(),
             allowed_ips: default_allowed_ips(),
+        }
+    }
+}
+
+impl Default for TlsConfig {
+    fn default() -> Self {
+        Self {
+            enable: false,
+            cert_path: None,
+            key_path: None,
+            http2: true,
+        }
+    }
+}
+
+impl Default for GeoIpConfig {
+    fn default() -> Self {
+        Self {
+            enable: false,
+            database_path: None,
+            allowed_countries: default_allowed_countries(),
+            blocked_countries: default_blocked_countries(),
+        }
+    }
+}
+
+impl Default for RedisConfig {
+    fn default() -> Self {
+        Self {
+            enable: false,
+            url: default_redis_url(),
+            session_ttl: default_session_ttl(),
+            pool_size: default_redis_pool_size(),
+        }
+    }
+}
+
+impl Default for UpstreamConfig {
+    fn default() -> Self {
+        Self {
+            enable: false,
+            servers: default_servers(),
+            load_balancing_strategy: default_lb_strategy(),
+            circuit_breaker: CircuitBreakerConfig::default(),
+        }
+    }
+}
+
+impl Default for CircuitBreakerConfig {
+    fn default() -> Self {
+        Self {
+            enable: true,
+            failure_threshold: default_failure_threshold(),
+            success_threshold: default_success_threshold(),
+            timeout_seconds: default_timeout_seconds(),
         }
     }
 }

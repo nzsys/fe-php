@@ -18,9 +18,14 @@ path = "src/lib.rs"
 [dependencies]
 # Async runtime
 tokio = { version = "1.35", features = ["full"] }
-hyper = { version = "1.1", features = ["full"] }
+hyper = { version = "1.1", features = ["full", "http2"] }
 hyper-util = { version = "0.1", features = ["full"] }
 http-body-util = "0.1"
+
+# TLS/SSL
+rustls = "0.21"
+tokio-rustls = "0.24"
+rustls-pemfile = "1.0"
 
 # CLI
 clap = { version = "4.4", features = ["derive", "cargo"] }
@@ -40,6 +45,13 @@ prometheus = { version = "0.13", features = ["process"] }
 # WAF
 regex = "1.10"
 maxminddb = "0.24"
+
+# Redis for session storage
+redis = { version = "0.24", features = ["tokio-comp", "connection-manager"] }
+
+# Load balancing and circuit breaker
+tower = { version = "0.4", features = ["full"] }
+tower-service = "0.3"
 
 # Error handling
 anyhow = "1.0"
@@ -68,6 +80,9 @@ walkdir = "2.4"
 
 # Rate limiting
 governor = "0.6"
+
+# Random number generation
+rand = "0.8"
 
 # HTTP client for benchmarking
 reqwest = { version = "0.11", features = ["json"] }
