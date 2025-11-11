@@ -30,17 +30,31 @@ pub struct PhpExecutor {
     fastcgi: Option<FastCgiClient>,
     document_root: PathBuf,
     use_fpm: bool,
+    skip_module_lifecycle: bool,  // Skip module_startup/shutdown (already done globally)
 }
 
 impl PhpExecutor {
+    /// Create executor with full PHP module initialization (call module_startup)
     pub fn new(config: PhpConfig) -> Result<Self> {
+        Self::new_internal(config, false)
+    }
+
+    /// Create executor without calling module_startup (for worker threads)
+    /// Use this when PHP module is already initialized globally
+    pub fn new_worker(config: PhpConfig) -> Result<Self> {
+        Self::new_internal(config, true)
+    }
+
+    fn new_internal(config: PhpConfig, skip_module_lifecycle: bool) -> Result<Self> {
         let (ffi, fastcgi) = if config.use_fpm {
             // Use PHP-FPM via FastCGI
             (None, Some(FastCgiClient::new(config.fpm_socket.clone())))
         } else {
-            // Use PHP CLI (legacy mode)
+            // Use libphp (load library but don't call module_startup if skip=true)
             let ffi = PhpFfi::load(&config.libphp_path)?;
-            ffi.module_startup()?;
+            if !skip_module_lifecycle {
+                ffi.module_startup()?;
+            }
             (Some(ffi), None)
         };
 
@@ -49,6 +63,7 @@ impl PhpExecutor {
             fastcgi,
             document_root: config.document_root,
             use_fpm: config.use_fpm,
+            skip_module_lifecycle,
         })
     }
 
@@ -239,7 +254,10 @@ impl PhpExecutor {
 impl Drop for PhpExecutor {
     fn drop(&mut self) {
         if let Some(ffi) = &self.ffi {
-            let _ = ffi.module_shutdown();
+            // Only call module_shutdown if we called module_startup
+            if !self.skip_module_lifecycle {
+                let _ = ffi.module_shutdown();
+            }
         }
     }
 }

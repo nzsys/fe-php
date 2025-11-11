@@ -20,6 +20,16 @@ impl WorkerPool {
     pub fn new(php_config: PhpConfig, config: WorkerPoolConfig) -> Result<Self> {
         let (request_tx, request_rx) = bounded(config.pool_size * 2);
 
+        // Initialize PHP module ONCE globally (not in worker threads)
+        if !php_config.use_fpm {
+            // For libphp mode, initialize the module once
+            let global_executor = PhpExecutor::new(php_config.clone())?;
+            // Immediately drop it - this will call module_shutdown when pool is destroyed
+            // Actually, we need to keep it alive for the lifetime of the pool
+            // Store it in the WorkerPool struct
+            std::mem::forget(global_executor); // Keep PHP initialized for the lifetime of the process
+        }
+
         // Spawn worker threads
         for worker_id in 0..config.pool_size {
             let request_rx = request_rx.clone();
@@ -48,7 +58,8 @@ impl WorkerPool {
         info!("Worker {} started", worker_id);
 
         // Initialize PHP executor for this worker
-        let executor = match PhpExecutor::new(php_config) {
+        // Use new_worker() to skip module_startup (already done globally)
+        let executor = match PhpExecutor::new_worker(php_config) {
             Ok(exec) => exec,
             Err(e) => {
                 error!("Worker {} failed to initialize PHP: {}", worker_id, e);
