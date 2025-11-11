@@ -3,6 +3,7 @@ use libloading::{Library, Symbol};
 use std::ffi::{CStr, CString};
 use std::os::raw::{c_char, c_int, c_void};
 use std::path::Path;
+use std::process::Command;
 use std::sync::Arc;
 
 /// PHP SAPI module structure (simplified)
@@ -17,17 +18,23 @@ pub struct SapiModule {
 
 /// PHP FFI bindings
 pub struct PhpFfi {
-    _library: Library,
+    _library: Option<Library>,
 }
 
 impl PhpFfi {
     /// Load libphp.so and bind functions
+    /// Note: For now, we use PHP CLI binary instead of embedded libphp,
+    /// so this library loading is optional
     pub fn load<P: AsRef<Path>>(library_path: P) -> Result<Self> {
         let library = unsafe {
-            Library::new(library_path.as_ref())
-                .with_context(|| {
-                    format!("Failed to load libphp from: {}", library_path.as_ref().display())
-                })?
+            match Library::new(library_path.as_ref()) {
+                Ok(lib) => Some(lib),
+                Err(_e) => {
+                    // Library not found, but we'll use PHP CLI binary instead
+                    // so we can continue without it
+                    None
+                }
+            }
         };
 
         Ok(Self {
@@ -63,19 +70,27 @@ impl PhpFfi {
     pub fn execute_script(&self, script_path: &str) -> Result<String> {
         self.request_startup()?;
 
-        // In a real implementation, this would:
-        // 1. Set up the SAPI environment
-        // 2. Populate superglobals ($_GET, $_POST, etc.)
-        // 3. Execute the script
-        // 4. Capture output buffer
-        // 5. Clean up
-
-        // For now, this is a placeholder that returns a simple response
-        let output = format!("PHP script executed: {}", script_path);
+        // Execute PHP script using the PHP binary
+        // In a real production implementation, this would use embedded PHP via libphp
+        // For now, we use the PHP CLI binary which is simpler but less efficient
+        let output = Command::new("php")
+            .arg(script_path)
+            .output()
+            .with_context(|| format!("Failed to execute PHP script: {}", script_path))?;
 
         self.request_shutdown();
 
-        Ok(output)
+        // Check if PHP execution succeeded
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(anyhow::anyhow!(
+                "PHP script execution failed: {}",
+                stderr
+            ));
+        }
+
+        // Return stdout from PHP execution
+        Ok(String::from_utf8_lossy(&output.stdout).to_string())
     }
 }
 
