@@ -358,12 +358,18 @@ impl PhpFfi {
 
     /// Shutdown PHP module
     pub fn module_shutdown(&self) -> Result<()> {
+        tracing::debug!("Initiating PHP module shutdown...");
         unsafe {
             let result = (self.php_module_shutdown)();
             if result != 0 {
-                return Err(anyhow::anyhow!("php_module_shutdown failed with code {}", result));
+                tracing::error!("php_module_shutdown failed with code {}", result);
+                return Err(anyhow::anyhow!(
+                    "php_module_shutdown failed with code {} - PHP may not shut down cleanly",
+                    result
+                ));
             }
         }
+        tracing::debug!("PHP module shutdown completed successfully");
         Ok(())
     }
 
