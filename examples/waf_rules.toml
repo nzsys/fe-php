@@ -1,0 +1,98 @@
+# WAF Rules Configuration
+# OWASP Core Rule Set - Simplified
+
+[[rules]]
+id = "SQL-001"
+description = "SQL Injection - UNION attack"
+pattern = "(?i)union.+select"
+field = "QueryString"
+action = "Block"
+severity = "Critical"
+
+[[rules]]
+id = "SQL-002"
+description = "SQL Injection - Comment syntax"
+pattern = "(?i)(--|#|/\\*|\\*/)"
+field = "QueryString"
+action = "Block"
+severity = "High"
+
+[[rules]]
+id = "SQL-003"
+description = "SQL Injection - OR/AND attack"
+pattern = "(?i)(or|and)\\s+['\"]?\\d+['\"]?\\s*=\\s*['\"]?\\d+"
+field = "QueryString"
+action = "Block"
+severity = "Critical"
+
+[[rules]]
+id = "XSS-001"
+description = "XSS - Script tag"
+pattern = "(?i)<script[^>]*>.*?</script>"
+field = "QueryString"
+action = "Block"
+severity = "High"
+
+[[rules]]
+id = "XSS-002"
+description = "XSS - Event handler"
+pattern = "(?i)on(load|error|click|mouse|focus|blur)"
+field = "QueryString"
+action = "Block"
+severity = "High"
+
+[[rules]]
+id = "XSS-003"
+description = "XSS - Javascript protocol"
+pattern = "(?i)javascript:"
+field = "QueryString"
+action = "Block"
+severity = "High"
+
+[[rules]]
+id = "PATH-001"
+description = "Path Traversal"
+pattern = "\\.\\.[/\\\\]"
+field = "Uri"
+action = "Block"
+severity = "High"
+
+[[rules]]
+id = "PATH-002"
+description = "Null byte injection"
+pattern = "\\x00"
+field = "Uri"
+action = "Block"
+severity = "High"
+
+[[rules]]
+id = "CMD-001"
+description = "Command Injection"
+pattern = "(?i)(;|\\||&|`|\\$\\(|\\$\\{)"
+field = "QueryString"
+action = "Block"
+severity = "Critical"
+
+[[rules]]
+id = "FILE-001"
+description = "Remote File Inclusion"
+pattern = "(?i)(http://|https://|ftp://|file://)"
+field = "QueryString"
+action = "Block"
+severity = "Critical"
+
+[[rules]]
+id = "FILE-002"
+description = "Local File Inclusion"
+pattern = "(?i)(\\.\\.[\\/]|etc[\\/]passwd|proc[\\/]self)"
+field = "QueryString"
+action = "Block"
+severity = "High"
+
+[[rules]]
+id = "CSRF-001"
+description = "Missing CSRF token"
+pattern = ""
+field = "Headers"
+action = "Log"
+severity = "Medium"
