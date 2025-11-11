@@ -1,10 +1,8 @@
 pub mod engine;
 pub mod rules;
-pub mod geoip;
 
 pub use engine::WafEngine;
 pub use rules::{WafRule, WafAction, WafSeverity};
-pub use geoip::{GeoIpService, GeoIpFilter};
 
 use anyhow::Result;
 use serde::{Deserialize, Serialize};

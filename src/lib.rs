@@ -7,10 +7,13 @@ pub mod logging;
 pub mod admin;
 pub mod cli;
 pub mod utils;
+
+// Phase 5 & 6 Advanced Features
 pub mod tls;
-pub mod redis;
-pub mod upstream;
-pub mod session;
+pub mod geoip;
+pub mod redis_session;
+pub mod tracing_telemetry;
+pub mod load_balancing;
 
 pub use config::Config;
 pub use server::Server;

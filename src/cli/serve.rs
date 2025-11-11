@@ -34,7 +34,7 @@ pub async fn run(args: ServeArgs) -> Result<()> {
     crate::metrics::init_metrics();
 
     // Create and start server
-    let server = Server::new(config)?;
+    let server = Server::new(config).await?;
     info!("Server starting...");
 
     server.serve().await?;

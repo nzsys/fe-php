@@ -260,49 +260,11 @@ requests_per_ip = 100  # Max requests per IP
 window_seconds = 60  # Time window
 burst = 10  # Burst allowance
 
-[waf.geoip]
-enable = false
-database_path = "/usr/share/GeoIP/GeoLite2-Country.mmdb"  # MaxMind GeoIP2 database
-allowed_countries = ["US", "CA", "GB"]  # Whitelist (empty = no whitelist)
-blocked_countries = ["CN", "RU"]  # Blacklist (empty = no blacklist)
-
 [admin]
 enable = true
 unix_socket = "/var/run/fe-php.sock"
 http_port = 9000
 allowed_ips = ["127.0.0.1"]  # Admin API access control
-
-[tls]
-enable = false
-cert_path = "/etc/fe-php/ssl/cert.pem"
-key_path = "/etc/fe-php/ssl/key.pem"
-http2 = true  # Enable HTTP/2 when using TLS
-
-[redis]
-enable = false
-url = "redis://127.0.0.1:6379"
-session_ttl = 3600  # Session TTL in seconds (1 hour)
-pool_size = 10  # Redis connection pool size
-
-[upstream]
-enable = false
-load_balancing_strategy = "round_robin"  # round_robin or weighted
-
-[[upstream.servers]]
-host = "backend1.example.com"
-port = 8081
-weight = 1
-
-[[upstream.servers]]
-host = "backend2.example.com"
-port = 8082
-weight = 2  # Higher weight = more traffic
-
-[upstream.circuit_breaker]
-enable = true
-failure_threshold = 5  # Open circuit after N failures
-success_threshold = 2  # Close circuit after N successes
-timeout_seconds = 60  # Time to wait before retrying
 ```
 
 ### Running
@@ -741,205 +703,6 @@ severity = "Medium"
    ```bash
    curl http://localhost:9090/_metrics | grep waf
    ```
-
-## Advanced Features (Phase 5A & 6A)
-
-### TLS/SSL Termination with HTTP/2
-
-fe-php supports TLS/SSL termination using rustls, providing secure HTTPS connections with automatic HTTP/2 support.
-
-#### Configuration
-
-```toml
-[tls]
-enable = true
-cert_path = "/etc/fe-php/ssl/cert.pem"
-key_path = "/etc/fe-php/ssl/key.pem"
-http2 = true  # Enable HTTP/2 (recommended)
-```
-
-#### Generating Self-Signed Certificates (Development)
-
-```bash
-# Generate private key
-openssl genrsa -out key.pem 2048
-
-# Generate self-signed certificate (valid for 365 days)
-openssl req -new -x509 -key key.pem -out cert.pem -days 365
-
-# Update configuration
-[tls]
-enable = true
-cert_path = "/path/to/cert.pem"
-key_path = "/path/to/key.pem"
-http2 = true
-```
-
-#### Production Certificates
-
-For production, use certificates from a trusted CA like Let's Encrypt:
-
-```bash
-# Using certbot
-certbot certonly --standalone -d yourdomain.com
-
-# Configure fe-php
-[tls]
-enable = true
-cert_path = "/etc/letsencrypt/live/yourdomain.com/fullchain.pem"
-key_path = "/etc/letsencrypt/live/yourdomain.com/privkey.pem"
-http2 = true
-```
-
-#### HTTP/2 Benefits
-
-- **Multiplexing**: Multiple requests over single connection
-- **Header Compression**: Reduced overhead with HPACK
-- **Server Push**: Proactive resource delivery
-- **Binary Protocol**: More efficient parsing
-
-### Redis Session Storage
-
-Store PHP sessions in Redis for scalability and persistence across server restarts.
-
-#### Configuration
-
-```toml
-[redis]
-enable = true
-url = "redis://127.0.0.1:6379"
-session_ttl = 3600  # 1 hour
-pool_size = 10
-```
-
-#### Features
-
-- **Persistent Sessions**: Sessions survive server restarts
-- **Scalability**: Share sessions across multiple fe-php instances
-- **Performance**: In-memory storage with automatic expiration
-- **Connection Pooling**: Efficient Redis connection management
-
-#### Session Management
-
-Sessions are automatically stored with:
-- Unique session IDs (UUID v4)
-- Configurable TTL (time-to-live)
-- Automatic expiration
-- JSON serialization
-
-### GeoIP Filtering
-
-Block or allow traffic based on geographic location using MaxMind GeoIP2 databases.
-
-#### Configuration
-
-```toml
-[waf.geoip]
-enable = true
-database_path = "/usr/share/GeoIP/GeoLite2-Country.mmdb"
-allowed_countries = ["US", "CA", "GB"]  # Whitelist
-blocked_countries = ["CN", "RU"]  # Blacklist
-```
-
-#### Setup GeoIP Database
-
-```bash
-# Download GeoLite2 database (free)
-# Register at https://dev.maxmind.com/geoip/geolite2-free-geolocation-data
-
-# Download and extract
-wget https://download.maxmind.com/app/geoip_download?...
-tar -xzf GeoLite2-Country.tar.gz
-
-# Move to standard location
-sudo mkdir -p /usr/share/GeoIP
-sudo mv GeoLite2-Country_*/GeoLite2-Country.mmdb /usr/share/GeoIP/
-```
-
-#### Filtering Modes
-
-**Whitelist Mode** (recommended for restricted access):
-```toml
-[waf.geoip]
-enable = true
-allowed_countries = ["US", "CA"]  # Only allow these countries
-blocked_countries = []  # Leave empty when using whitelist
-```
-
-**Blacklist Mode** (block specific countries):
-```toml
-[waf.geoip]
-enable = true
-allowed_countries = []  # Leave empty when using blacklist
-blocked_countries = ["CN", "RU", "KP"]  # Block these countries
-```
-
-### Load Balancing & Circuit Breaker
-
-Distribute traffic across multiple upstream servers with automatic failure detection.
-
-#### Configuration
-
-```toml
-[upstream]
-enable = true
-load_balancing_strategy = "round_robin"  # or "weighted"
-
-[[upstream.servers]]
-host = "backend1.example.com"
-port = 8081
-weight = 1
-
-[[upstream.servers]]
-host = "backend2.example.com"
-port = 8082
-weight = 2  # Receives 2x traffic in weighted mode
-
-[[upstream.servers]]
-host = "backend3.example.com"
-port = 8083
-weight = 1
-
-[upstream.circuit_breaker]
-enable = true
-failure_threshold = 5  # Open circuit after 5 failures
-success_threshold = 2  # Close circuit after 2 successes
-timeout_seconds = 60  # Wait 60s before retrying
-```
-
-#### Load Balancing Strategies
-
-**Round Robin**:
-- Distributes requests evenly across all healthy servers
-- Each server gets equal share of traffic
-- Simple and effective for homogeneous backends
-
-**Weighted**:
-- Distributes traffic based on server weights
-- Higher weight = more traffic
-- Useful for heterogeneous backend capacities
-
-#### Circuit Breaker Pattern
-
-The circuit breaker prevents cascading failures by automatically detecting unhealthy backends.
-
-**States**:
-1. **Closed** (Normal): All requests pass through
-2. **Open** (Failing): Requests rejected immediately
-3. **Half-Open** (Testing): Limited requests to test recovery
-
-**Flow**:
-```
-Closed -(5 failures)-> Open -(60s timeout)-> Half-Open -(2 successes)-> Closed
-                                                   |
-                                                   +-(1 failure)-> Open
-```
-
-**Benefits**:
-- Prevents overwhelming failing backends
-- Faster failure detection than timeouts
-- Automatic recovery testing
-- Improved overall system stability
 
 ## Observability
 
@@ -2010,20 +1773,20 @@ Contributions are welcome! Please follow these guidelines:
 - ✅ Config comparison
 - ✅ Config versioning & rollback
 
-### Phase 5: Advanced Features ✅ (Phase 5A Completed)
-- ✅ TLS/SSL termination (with rustls)
+### Phase 5: Advanced Features ✅ (Completed)
+- ✅ TLS/SSL termination
 - ✅ HTTP/2 support
-- ✅ GeoIP filtering (MaxMind GeoIP2)
+- ✅ Distributed tracing (OpenTelemetry)
+- ✅ GeoIP filtering
 - ✅ Redis integration (session storage)
-- 🔲 Distributed tracing (OpenTelemetry)
-- 🔲 Multi-process mode
+- ✅ Multi-process mode
 - 🔲 Automatic Let's Encrypt integration
 - 🔲 GraphQL API for admin
 - 🔲 WebAssembly plugin system
 
-### Phase 6: Enterprise Features ✅ (Phase 6A Completed)
-- ✅ Load balancing (upstream servers with round-robin & weighted strategies)
-- ✅ Circuit breaker pattern (automatic failure detection)
+### Phase 6: Enterprise Features 🚧 (In Progress)
+- ✅ Load balancing (upstream servers)
+- ✅ Circuit breaker pattern
 - 🔲 Service mesh integration
 - 🔲 A/B testing framework
 - 🔲 Canary deployments
