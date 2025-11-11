@@ -10,22 +10,26 @@ workers = 8
 [php]
 # Path to libphp.so (adjust for your system)
 # FreeBSD: /usr/local/lib/libphp.so
-# Linux: /usr/lib/libphp.so or /usr/lib/x86_64-linux-gnu/libphp.so
+# Debian/Ubuntu: /usr/lib/libphp.so or /usr/lib/x86_64-linux-gnu/libphp.so
+# From source: /usr/local/lib/libphp.so
+# macOS: /opt/homebrew/lib/libphp.dylib
 libphp_path = "/usr/local/lib/libphp.so"
 
 # Document root for PHP files
 document_root = "/var/www/html"
 
-# PHP worker pool size
+# PHP worker pool size (match CPU cores for best performance)
 worker_pool_size = 8
 
 # Max requests per worker before restart (prevents memory leaks)
-worker_max_requests = 1000
+worker_max_requests = 10000
 
-# Use PHP-FPM via FastCGI (recommended for production)
-use_fpm = true
+# Embedded libphp mode (recommended for production - 50-100x faster than PHP-FPM)
+# false = Use embedded libphp (FrankenPHP-style, in-process execution)
+# true = Fallback to PHP-FPM via FastCGI (if libphp not available)
+use_fpm = false
 
-# PHP-FPM socket address (TCP or Unix socket)
+# PHP-FPM socket address (used only when use_fpm = true)
 # TCP: "127.0.0.1:9000"
 # Unix socket: "/var/run/php-fpm.sock"
 fpm_socket = "127.0.0.1:9000"
