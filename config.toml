@@ -1,0 +1,38 @@
+# fe-php Test Configuration
+
+[server]
+host = "0.0.0.0"
+port = 8080
+workers = 8
+
+[php]
+libphp_path = "/usr/local/lib/libphp.so"
+document_root = "/var/www/html"
+worker_pool_size = 8
+worker_max_requests = 1000
+
+# Use CLI mode for now (PHP-FPM not available)
+use_fpm = false
+fpm_socket = "127.0.0.1:9000"
+
+[php.opcache]
+enable = true
+memory_size = "256M"
+max_files = 10000
+validate_timestamps = false
+
+[logging]
+level = "info"
+format = "json"
+output = "stdout"
+
+[metrics]
+enable = true
+endpoint = "/_metrics"
+port = 9090
+
+[waf]
+enable = false
+
+[admin]
+enable = false
