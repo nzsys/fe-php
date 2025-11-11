@@ -16,7 +16,7 @@ use hyper::server::conn::{http1, http2};
 use hyper::service::service_fn;
 use hyper::{Request, Response, body::Incoming};
 use hyper_util::rt::TokioIo;
-use std::net::SocketAddr;
+use std::net::{SocketAddr, ToSocketAddrs};
 use std::sync::Arc;
 use tokio::net::TcpListener;
 use tokio_rustls::TlsAcceptor;
@@ -152,9 +152,13 @@ impl Server {
 
     pub async fn serve(self) -> Result<()> {
         let addr_str = format!("{}:{}", self.config.server.host, self.config.server.port);
-        let addr: SocketAddr = addr_str.parse()
-            .with_context(|| format!("Failed to parse socket address: '{}' (host: '{}', port: {})",
-                addr_str, self.config.server.host, self.config.server.port))?;
+
+        // Resolve hostname to socket address (supports both IP addresses and hostnames like "localhost")
+        let addr: SocketAddr = addr_str.to_socket_addrs()
+            .with_context(|| format!("Failed to resolve address: '{}' (host: '{}', port: {})",
+                addr_str, self.config.server.host, self.config.server.port))?
+            .next()
+            .with_context(|| format!("No addresses resolved for: '{}'", addr_str))?;
 
         let listener = TcpListener::bind(addr).await
             .with_context(|| format!("Failed to bind to address: {}", addr))?;
