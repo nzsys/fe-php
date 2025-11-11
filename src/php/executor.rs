@@ -1,4 +1,5 @@
 use super::ffi::PhpFfi;
+use super::fastcgi::FastCgiClient;
 use super::PhpConfig;
 use anyhow::Result;
 use std::collections::HashMap;
@@ -24,18 +25,29 @@ pub struct PhpResponse {
 }
 
 pub struct PhpExecutor {
-    ffi: PhpFfi,
+    ffi: Option<PhpFfi>,
+    fastcgi: Option<FastCgiClient>,
     document_root: PathBuf,
+    use_fpm: bool,
 }
 
 impl PhpExecutor {
     pub fn new(config: PhpConfig) -> Result<Self> {
-        let ffi = PhpFfi::load(&config.libphp_path)?;
-        ffi.module_startup()?;
+        let (ffi, fastcgi) = if config.use_fpm {
+            // Use PHP-FPM via FastCGI
+            (None, Some(FastCgiClient::new(config.fpm_socket.clone())))
+        } else {
+            // Use PHP CLI (legacy mode)
+            let ffi = PhpFfi::load(&config.libphp_path)?;
+            ffi.module_startup()?;
+            (Some(ffi), None)
+        };
 
         Ok(Self {
             ffi,
+            fastcgi,
             document_root: config.document_root,
+            use_fpm: config.use_fpm,
         })
     }
 
@@ -45,22 +57,97 @@ impl PhpExecutor {
         // Determine script path from URI
         let script_path = self.resolve_script_path(&request.uri)?;
 
-        // Execute PHP script
-        let output = self.ffi.execute_script(script_path.to_str().unwrap())?;
+        if self.use_fpm {
+            // Execute via PHP-FPM
+            let fastcgi = self.fastcgi.as_ref().unwrap();
 
-        let execution_time_ms = start.elapsed().as_millis() as u64;
+            // Use tokio's block_in_place to run async code in blocking context
+            let (stdout, stderr) = tokio::task::block_in_place(|| {
+                tokio::runtime::Handle::current().block_on(
+                    fastcgi.execute(
+                        script_path.to_str().unwrap(),
+                        &request.method,
+                        &request.uri,
+                        &request.query_string,
+                        &request.headers,
+                        &request.body,
+                        &request.remote_addr,
+                    )
+                )
+            })?;
 
-        // Build response
+            let execution_time_ms = start.elapsed().as_millis() as u64;
+
+            // Parse FastCGI response (HTTP headers + body)
+            let (status_code, headers, body) = self.parse_fastcgi_response(&stdout)?;
+
+            Ok(PhpResponse {
+                status_code,
+                headers,
+                body,
+                execution_time_ms,
+                memory_peak_mb: 0.0,
+            })
+        } else {
+            // Execute via PHP CLI (legacy mode)
+            let ffi = self.ffi.as_ref().unwrap();
+            let output = ffi.execute_script(script_path.to_str().unwrap())?;
+
+            let execution_time_ms = start.elapsed().as_millis() as u64;
+
+            // Build response
+            let mut headers = HashMap::new();
+            headers.insert("Content-Type".to_string(), "text/html; charset=UTF-8".to_string());
+
+            Ok(PhpResponse {
+                status_code: 200,
+                headers,
+                body: output.into_bytes(),
+                execution_time_ms,
+                memory_peak_mb: 0.0,
+            })
+        }
+    }
+
+    fn parse_fastcgi_response(&self, data: &[u8]) -> Result<(u16, HashMap<String, String>, Vec<u8>)> {
+        let response_str = String::from_utf8_lossy(data);
+        let mut lines = response_str.lines();
+
+        let mut status_code = 200u16;
         let mut headers = HashMap::new();
-        headers.insert("Content-Type".to_string(), "text/html; charset=UTF-8".to_string());
+        let mut body_start = 0;
 
-        Ok(PhpResponse {
-            status_code: 200,
-            headers,
-            body: output.into_bytes(),
-            execution_time_ms,
-            memory_peak_mb: 0.0, // Would be populated from PHP in real implementation
-        })
+        // Parse headers
+        for (i, line) in response_str.lines().enumerate() {
+            if line.is_empty() {
+                // Empty line marks end of headers
+                body_start = response_str.lines().take(i + 1).map(|l| l.len() + 1).sum();
+                break;
+            }
+
+            if let Some((name, value)) = line.split_once(':') {
+                let name = name.trim().to_string();
+                let value = value.trim().to_string();
+
+                if name.eq_ignore_ascii_case("Status") {
+                    // Parse status code from "Status: 200 OK"
+                    if let Some(code_str) = value.split_whitespace().next() {
+                        status_code = code_str.parse().unwrap_or(200);
+                    }
+                } else {
+                    headers.insert(name, value);
+                }
+            }
+        }
+
+        // Extract body
+        let body = if body_start < data.len() {
+            data[body_start..].to_vec()
+        } else {
+            Vec::new()
+        };
+
+        Ok((status_code, headers, body))
     }
 
     fn resolve_script_path(&self, uri: &str) -> Result<PathBuf> {
@@ -97,7 +184,9 @@ impl PhpExecutor {
 
 impl Drop for PhpExecutor {
     fn drop(&mut self) {
-        let _ = self.ffi.module_shutdown();
+        if let Some(ffi) = &self.ffi {
+            let _ = ffi.module_shutdown();
+        }
     }
 }
 

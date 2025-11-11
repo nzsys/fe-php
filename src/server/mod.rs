@@ -41,6 +41,8 @@ impl Server {
             document_root: config.php.document_root.clone(),
             worker_pool_size: config.php.worker_pool_size,
             worker_max_requests: config.php.worker_max_requests,
+            use_fpm: config.php.use_fpm,
+            fpm_socket: config.php.fpm_socket.clone(),
         };
 
         let pool_config = WorkerPoolConfig {
