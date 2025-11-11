@@ -19,7 +19,8 @@ worker_max_requests = 1000
 # Embedded libphp mode (recommended for performance)
 # Set to false to use embedded libphp (FrankenPHP-style, 50-100x faster)
 # Set to true to fallback to PHP-FPM (if libphp not available)
-use_fpm = false
+# TEMPORARY: Using FPM mode since libphp.so is not installed
+use_fpm = true
 fpm_socket = "127.0.0.1:9000"
 
 [php.opcache]
