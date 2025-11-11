@@ -151,10 +151,13 @@ impl Server {
     }
 
     pub async fn serve(self) -> Result<()> {
-        let addr: SocketAddr = format!("{}:{}", self.config.server.host, self.config.server.port)
-            .parse()?;
+        let addr_str = format!("{}:{}", self.config.server.host, self.config.server.port);
+        let addr: SocketAddr = addr_str.parse()
+            .with_context(|| format!("Failed to parse socket address: '{}' (host: '{}', port: {})",
+                addr_str, self.config.server.host, self.config.server.port))?;
 
-        let listener = TcpListener::bind(addr).await?;
+        let listener = TcpListener::bind(addr).await
+            .with_context(|| format!("Failed to bind to address: {}", addr))?;
 
         let protocol = if self.tls_manager.is_some() { "https" } else { "http" };
         info!("Server listening on {}://{}", protocol, addr);
