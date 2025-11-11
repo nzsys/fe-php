@@ -8,6 +8,13 @@ pub mod admin;
 pub mod cli;
 pub mod utils;
 
+// Phase 5 & 6 Advanced Features
+pub mod tls;
+pub mod geoip;
+pub mod redis_session;
+pub mod tracing_telemetry;
+pub mod load_balancing;
+
 pub use config::Config;
 pub use server::Server;
 
