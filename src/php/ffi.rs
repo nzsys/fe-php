@@ -136,6 +136,9 @@ pub struct PhpFfi {
     php_request_shutdown: Symbol<'static, unsafe extern "C" fn(*mut c_void) -> c_void>,
     php_execute_script: Symbol<'static, unsafe extern "C" fn(*mut ZendFileHandle) -> c_int>,
     sapi_module: *mut SapiModule,
+    // Keep CStrings alive for the lifetime of PhpFfi
+    _sapi_name: Box<CString>,
+    _sapi_pretty_name: Box<CString>,
 }
 
 impl PhpFfi {
@@ -189,6 +192,10 @@ impl PhpFfi {
             *symbol
         };
 
+        // Create CStrings that will live for the lifetime of PhpFfi
+        let sapi_name = Box::new(CString::new("fe-php").unwrap());
+        let sapi_pretty_name = Box::new(CString::new("fe-php embedded").unwrap());
+
         Ok(Self {
             library,
             php_module_startup,
@@ -197,6 +204,8 @@ impl PhpFfi {
             php_request_shutdown,
             php_execute_script,
             sapi_module,
+            _sapi_name: sapi_name,
+            _sapi_pretty_name: sapi_pretty_name,
         })
     }
 
@@ -207,15 +216,9 @@ impl PhpFfi {
             if !self.sapi_module.is_null() {
                 let sapi = &mut *self.sapi_module;
 
-                // Set SAPI name
-                let name = CString::new("fe-php").unwrap();
-                sapi.name = name.as_ptr();
-                let pretty_name = CString::new("fe-php embedded").unwrap();
-                sapi.pretty_name = pretty_name.as_ptr();
-
-                // Prevent memory leaks by not freeing these strings
-                std::mem::forget(name);
-                std::mem::forget(pretty_name);
+                // Set SAPI name (using the boxed CStrings that live for PhpFfi's lifetime)
+                sapi.name = self._sapi_name.as_ptr();
+                sapi.pretty_name = self._sapi_pretty_name.as_ptr();
 
                 // Set required callbacks
                 sapi.ub_write = Some(php_output_handler);
@@ -224,6 +227,15 @@ impl PhpFfi {
                 sapi.read_post = Some(php_read_post);
                 sapi.read_cookies = Some(php_read_cookies);
                 sapi.log_message = Some(php_log_message);
+
+                // Set additional fields to safe defaults
+                sapi.php_ini_path_override = ptr::null_mut();
+                sapi.executable_location = ptr::null_mut();
+                sapi.php_ini_ignore = 0;
+                sapi.php_ini_ignore_cwd = 0;
+                sapi.phpinfo_as_text = 0;
+                sapi.ini_entries = ptr::null_mut();
+                sapi.additional_functions = ptr::null();
             }
 
             // Call PHP module startup
