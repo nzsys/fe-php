@@ -14,6 +14,7 @@ pub struct WorkerPoolConfig {
 pub struct WorkerPool {
     request_tx: Sender<(PhpRequest, Sender<Result<PhpResponse>>)>,
     config: WorkerPoolConfig,
+    _php_module: Option<PhpExecutor>,  // Keep PHP module initialized for process lifetime
 }
 
 impl WorkerPool {
@@ -21,14 +22,14 @@ impl WorkerPool {
         let (request_tx, request_rx) = bounded(config.pool_size * 2);
 
         // Initialize PHP module ONCE globally (not in worker threads)
-        if !php_config.use_fpm {
+        // This executor is kept alive for the lifetime of WorkerPool
+        // Drop will call module_shutdown when pool is destroyed
+        let php_module = if !php_config.use_fpm {
             // For libphp mode, initialize the module once
-            let global_executor = PhpExecutor::new(php_config.clone())?;
-            // Immediately drop it - this will call module_shutdown when pool is destroyed
-            // Actually, we need to keep it alive for the lifetime of the pool
-            // Store it in the WorkerPool struct
-            std::mem::forget(global_executor); // Keep PHP initialized for the lifetime of the process
-        }
+            Some(PhpExecutor::new(php_config.clone())?)
+        } else {
+            None
+        };
 
         // Spawn worker threads
         for worker_id in 0..config.pool_size {
@@ -46,6 +47,7 @@ impl WorkerPool {
         Ok(Self {
             request_tx,
             config,
+            _php_module: php_module,
         })
     }
 
