@@ -4,6 +4,7 @@ use super::PhpConfig;
 use anyhow::{Context, Result};
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::Arc;
 use memchr::memmem;
 
 #[derive(Debug, Clone)]
@@ -26,7 +27,7 @@ pub struct PhpResponse {
 }
 
 pub struct PhpExecutor {
-    ffi: Option<PhpFfi>,
+    ffi: Option<Arc<PhpFfi>>,
     fastcgi: Option<FastCgiClient>,
     document_root: PathBuf,
     use_fpm: bool,
@@ -35,27 +36,16 @@ pub struct PhpExecutor {
 
 impl PhpExecutor {
     /// Create executor with full PHP module initialization (call module_startup)
+    /// This should be called once globally, and returns the shared PhpFfi instance
     pub fn new(config: PhpConfig) -> Result<Self> {
-        Self::new_internal(config, false)
-    }
-
-    /// Create executor without calling module_startup (for worker threads)
-    /// Use this when PHP module is already initialized globally
-    pub fn new_worker(config: PhpConfig) -> Result<Self> {
-        Self::new_internal(config, true)
-    }
-
-    fn new_internal(config: PhpConfig, skip_module_lifecycle: bool) -> Result<Self> {
         let (ffi, fastcgi) = if config.use_fpm {
             // Use PHP-FPM via FastCGI
             (None, Some(FastCgiClient::new(config.fpm_socket.clone())))
         } else {
-            // Use libphp (load library but don't call module_startup if skip=true)
+            // Use libphp and initialize PHP module
             let ffi = PhpFfi::load(&config.libphp_path)?;
-            if !skip_module_lifecycle {
-                ffi.module_startup()?;
-            }
-            (Some(ffi), None)
+            ffi.module_startup()?;
+            (Some(Arc::new(ffi)), None)
         };
 
         Ok(Self {
@@ -63,8 +53,33 @@ impl PhpExecutor {
             fastcgi,
             document_root: config.document_root,
             use_fpm: config.use_fpm,
-            skip_module_lifecycle,
+            skip_module_lifecycle: false,
         })
+    }
+
+    /// Create executor using shared PhpFfi instance (for worker threads)
+    /// This avoids multiple library loads and module initialization
+    pub fn new_worker(config: PhpConfig, shared_ffi: Option<Arc<PhpFfi>>) -> Result<Self> {
+        let (ffi, fastcgi) = if config.use_fpm {
+            // Use PHP-FPM via FastCGI
+            (None, Some(FastCgiClient::new(config.fpm_socket.clone())))
+        } else {
+            // Use shared PhpFfi instance (no need to load or initialize)
+            (shared_ffi, None)
+        };
+
+        Ok(Self {
+            ffi,
+            fastcgi,
+            document_root: config.document_root,
+            use_fpm: config.use_fpm,
+            skip_module_lifecycle: true,
+        })
+    }
+
+    /// Get the shared PhpFfi instance (for passing to workers)
+    pub fn get_shared_ffi(&self) -> Option<Arc<PhpFfi>> {
+        self.ffi.clone()
     }
 
     pub fn execute(&self, request: PhpRequest) -> Result<PhpResponse> {

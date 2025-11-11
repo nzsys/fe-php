@@ -1,7 +1,9 @@
 use super::executor::{PhpExecutor, PhpRequest, PhpResponse};
+use super::ffi::PhpFfi;
 use super::PhpConfig;
 use anyhow::Result;
 use async_channel::{Sender, Receiver, bounded};
+use std::sync::Arc;
 use tokio::task;
 use tracing::{info, warn, error};
 
@@ -14,6 +16,7 @@ pub struct WorkerPool {
     request_tx: Sender<(PhpRequest, Sender<Result<PhpResponse>>)>,
     config: WorkerPoolConfig,
     _php_module: Option<PhpExecutor>,  // Keep PHP module initialized for process lifetime
+    shared_ffi: Option<Arc<PhpFfi>>,   // Shared FFI instance for all workers
 }
 
 impl WorkerPool {
@@ -23,10 +26,12 @@ impl WorkerPool {
         // Initialize PHP module ONCE globally (not in worker threads)
         // This prevents "zend_mm_heap corrupted" error when multiple workers
         // try to call php_module_startup() simultaneously
-        let php_module = if !php_config.use_fpm {
-            Some(PhpExecutor::new(php_config.clone())?)  // Calls module_startup() once
+        let (php_module, shared_ffi) = if !php_config.use_fpm {
+            let module = PhpExecutor::new(php_config.clone())?;  // Calls module_startup() once
+            let ffi = module.get_shared_ffi();
+            (Some(module), ffi)
         } else {
-            None  // PHP-FPM mode doesn't need global initialization
+            (None, None)  // PHP-FPM mode doesn't need global initialization
         };
 
         // Spawn worker threads
@@ -34,9 +39,10 @@ impl WorkerPool {
             let request_rx = request_rx.clone();
             let php_config = php_config.clone();
             let max_requests = config.max_requests;
+            let shared_ffi = shared_ffi.clone();
 
             task::spawn_blocking(move || {
-                Self::worker_thread(worker_id, request_rx, php_config, max_requests);
+                Self::worker_thread(worker_id, request_rx, php_config, max_requests, shared_ffi);
             });
         }
 
@@ -46,6 +52,7 @@ impl WorkerPool {
             request_tx,
             config,
             _php_module: php_module,  // Kept alive for process lifetime
+            shared_ffi,               // Kept alive and shared with all workers
         })
     }
 
@@ -54,12 +61,13 @@ impl WorkerPool {
         request_rx: Receiver<(PhpRequest, Sender<Result<PhpResponse>>)>,
         php_config: PhpConfig,
         max_requests: usize,
+        shared_ffi: Option<Arc<PhpFfi>>,
     ) {
         info!("Worker {} started", worker_id);
 
         // Initialize PHP executor for this worker
-        // Use new_worker() to skip module_startup (already called globally)
-        let executor = match PhpExecutor::new_worker(php_config) {
+        // Use new_worker() with shared PhpFfi instance (no need to load library or call module_startup)
+        let executor = match PhpExecutor::new_worker(php_config, shared_ffi) {
             Ok(exec) => exec,
             Err(e) => {
                 error!("Worker {} failed to initialize PHP: {}", worker_id, e);
