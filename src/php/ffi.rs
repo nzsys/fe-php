@@ -198,21 +198,26 @@ impl PhpFfi {
             // Use platform-specific loading flags for better compatibility
             #[cfg(unix)]
             {
-                // IMPORTANT: Use RTLD_NOW | RTLD_LOCAL (not RTLD_GLOBAL) for macOS
-                // RTLD_GLOBAL can cause symbol conflicts when multiple workers are initialized
+                // For single-worker mode (workers=1), PHP needs RTLD_GLOBAL
+                // PHP's internal extensions and opcache require symbols in global namespace
+                //
                 // RTLD_NOW (2): Resolve all symbols immediately (catch errors early)
-                // RTLD_LOCAL (0): Keep symbols private to this library (prevent conflicts)
+                // RTLD_GLOBAL (0x100): Make symbols available globally (required for PHP execution)
+                //
+                // Note: RTLD_GLOBAL is safe for single-worker mode since there's no
+                // symbol conflict between workers. For multi-worker, would need RTLD_LOCAL
+                // but that prevents PHP from executing scripts properly.
                 const RTLD_NOW: flag_type = 2;
-                const RTLD_LOCAL: flag_type = 0;  // Changed from RTLD_GLOBAL
+                const RTLD_GLOBAL: flag_type = 0x100;
 
                 tracing::info!(
-                    "Loading libphp from {:?} with RTLD_NOW | RTLD_LOCAL flags (safer for macOS)",
+                    "Loading libphp from {:?} with RTLD_NOW | RTLD_GLOBAL flags",
                     library_path.as_ref()
                 );
 
                 let unix_lib = UnixLibrary::open(
                     Some(library_path.as_ref()),
-                    RTLD_NOW | RTLD_LOCAL  // Changed from RTLD_GLOBAL
+                    RTLD_NOW | RTLD_GLOBAL
                 ).with_context(|| format!("Failed to load libphp from {:?}", library_path.as_ref()))?;
 
                 Library::from(unix_lib)
