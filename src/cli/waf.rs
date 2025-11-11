@@ -81,7 +81,7 @@ pub async fn run(args: WafArgs) -> Result<()> {
             // 2. Run them against the provided request
             // 3. Show which rules matched
 
-            println!("   Rule matched: SQL-001 (SQL Injection - UNION attack)");
+            println!("[!] Rule matched: SQL-001 (SQL Injection - UNION attack)");
             println!("   Action: Block");
             println!("   Severity: Critical");
 
@@ -96,7 +96,7 @@ pub async fn run(args: WafArgs) -> Result<()> {
             // 2. Validate rules
             // 3. Signal the server to reload rules
 
-            println!(" Loaded 42 rules");
+            println!("[OK] Loaded 42 rules");
 
             Ok(())
         }
@@ -109,7 +109,7 @@ pub async fn run(args: WafArgs) -> Result<()> {
             // 1. Generate TOML with default OWASP Core Rule Set
             // 2. Write to output file
 
-            println!(" Generated {} rules", 42);
+            println!("[OK] Generated {} rules", 42);
 
             Ok(())
         }

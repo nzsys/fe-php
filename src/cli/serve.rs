@@ -1,6 +1,6 @@
 use clap::Args;
 use anyhow::Result;
-use fe_php::{Config, Server};
+use crate::{Config, Server};
 use std::path::PathBuf;
 use tracing::info;
 
@@ -16,9 +16,9 @@ pub async fn run(args: ServeArgs) -> Result<()> {
     let config = Config::from_file(&args.config)?;
 
     // Initialize logging
-    fe_php::logging::init_logging(&config.logging.level, &config.logging.format)?;
+    crate::logging::init_logging(&config.logging.level, &config.logging.format)?;
 
-    info!("Starting fe-php server v{}", fe_php::VERSION);
+    info!("Starting fe-php server v{}", crate::VERSION);
     info!("Loading configuration from: {}", args.config.display());
 
     // Validate configuration
@@ -28,10 +28,10 @@ pub async fn run(args: ServeArgs) -> Result<()> {
     }
 
     // Setup signal handlers
-    fe_php::utils::setup_signal_handlers().await?;
+    crate::utils::setup_signal_handlers().await?;
 
     // Initialize metrics
-    fe_php::metrics::init_metrics();
+    crate::metrics::init_metrics();
 
     // Create and start server
     let server = Server::new(config)?;

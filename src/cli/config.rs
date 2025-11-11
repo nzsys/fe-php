@@ -1,6 +1,6 @@
 use clap::{Args, Subcommand};
 use anyhow::Result;
-use fe_php::Config;
+use crate::Config;
 use std::path::PathBuf;
 
 #[derive(Args)]
