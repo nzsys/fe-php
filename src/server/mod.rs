@@ -51,6 +51,13 @@ impl Server {
         };
 
         let worker_pool = WorkerPool::new(php_config, pool_config)?;
+
+        // CRITICAL for macOS: Allow PHP workers to fully stabilize
+        // After barrier synchronization, workers need additional time to settle
+        // into their event loops before server starts accepting connections
+        info!("Allowing PHP workers to stabilize...");
+        tokio::time::sleep(tokio::time::Duration::from_millis(150)).await;
+
         let metrics = MetricsCollector::new();
 
         // Initialize TLS if enabled
@@ -140,6 +147,13 @@ impl Server {
             None
         };
 
+        // Final stabilization delay for macOS
+        // Ensures all async initializations (health checks, etc.) have started properly
+        if !config.php.use_fpm {
+            info!("Final initialization stabilization...");
+            tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+        }
+
         Ok(Self {
             config: Arc::new(config),
             worker_pool: Arc::new(worker_pool),
@@ -171,6 +185,13 @@ impl Server {
         if self.config.server.enable_http2 {
             info!("HTTP/2 support enabled");
         }
+
+        // CRITICAL for macOS: Give the system time to stabilize after PHP worker initialization
+        // PHP workers use spawn_blocking which can interfere with tokio runtime initialization
+        // Without this delay, macOS can experience segmentation faults when entering the accept loop
+        info!("Stabilizing runtime before accepting connections...");
+        tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
+        info!("Runtime stabilized, ready to accept connections");
 
         let server = Arc::new(self);
 
