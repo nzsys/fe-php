@@ -9,19 +9,22 @@ use std::sync::Mutex;
 // PHP types
 type ZvalPtr = *mut c_void;
 
-// zend_file_handle type constants (PHP 8.0+)
+// zend_file_handle type constants (PHP 8.1+)
 const ZEND_HANDLE_FILENAME: c_int = 0;
 const ZEND_HANDLE_FP: c_int = 1;
 const ZEND_HANDLE_STREAM: c_int = 2;
 
-/// PHP zend_file_handle structure (simplified for PHP 8.0+)
+/// PHP zend_file_handle structure (PHP 8.1+)
+/// This structure changed significantly in PHP 8.1
 #[repr(C)]
 pub struct ZendFileHandle {
-    pub handle: *mut c_void,
     pub filename: *const c_char,
     pub opened_path: *mut c_char,
-    pub handle_type: c_int,
-    pub free_filename: bool,
+    pub handle_type: u8,
+    pub primary_script: bool,
+    pub in_list: bool,
+    pub buf: *mut c_char,
+    pub buf_len: usize,
 }
 
 /// PHP SAPI module structure
@@ -89,6 +92,18 @@ extern "C" fn php_output_handler(output: *const c_char, output_len: c_uint) -> c
     output_len
 }
 
+/// SAPI activate callback
+extern "C" fn php_sapi_activate() -> c_int {
+    // Called at the start of each request
+    0 // SUCCESS
+}
+
+/// SAPI deactivate callback
+extern "C" fn php_sapi_deactivate() -> c_int {
+    // Called at the end of each request
+    0 // SUCCESS
+}
+
 /// Stub callback for registering server variables
 /// PHP calls this during request startup to populate $_SERVER
 extern "C" fn php_register_variables(_track_vars_array: *mut c_void) {
@@ -135,6 +150,7 @@ pub struct PhpFfi {
     php_request_startup: Symbol<'static, unsafe extern "C" fn() -> c_int>,
     php_request_shutdown: Symbol<'static, unsafe extern "C" fn(*mut c_void) -> c_void>,
     php_execute_script: Symbol<'static, unsafe extern "C" fn(*mut ZendFileHandle) -> c_int>,
+    zend_stream_init_filename: Option<Symbol<'static, unsafe extern "C" fn(*mut ZendFileHandle, *const c_char) -> c_int>>,
     sapi_module: *mut SapiModule,
     // Keep CStrings alive for the lifetime of PhpFfi
     _sapi_name: Box<CString>,
@@ -185,6 +201,15 @@ impl PhpFfi {
             std::mem::transmute(symbol)
         };
 
+        // Load zend_stream_init_filename (PHP 8.1+ only, optional for backward compatibility)
+        let zend_stream_init_filename = unsafe {
+            library.get(b"zend_stream_init_filename\0")
+                .ok()
+                .map(|symbol: Symbol<unsafe extern "C" fn(*mut ZendFileHandle, *const c_char) -> c_int>| {
+                    std::mem::transmute(symbol)
+                })
+        };
+
         // Get SAPI module pointer
         let sapi_module: *mut SapiModule = unsafe {
             let symbol: Symbol<*mut SapiModule> = library.get(b"sapi_module\0")
@@ -203,6 +228,7 @@ impl PhpFfi {
             php_request_startup,
             php_request_shutdown,
             php_execute_script,
+            zend_stream_init_filename,
             sapi_module,
             _sapi_name: sapi_name,
             _sapi_pretty_name: sapi_pretty_name,
@@ -221,6 +247,8 @@ impl PhpFfi {
                 sapi.pretty_name = self._sapi_pretty_name.as_ptr();
 
                 // Set required callbacks
+                sapi.activate = Some(php_sapi_activate);
+                sapi.deactivate = Some(php_sapi_deactivate);
                 sapi.ub_write = Some(php_output_handler);
                 sapi.flush = Some(php_flush);
                 sapi.register_server_variables = Some(php_register_variables);
@@ -301,14 +329,28 @@ impl PhpFfi {
             let path_cstr = CString::new(script_path)
                 .with_context(|| format!("Invalid script path: {}", script_path))?;
 
-            // Create zend_file_handle structure
+            // Create zend_file_handle structure (PHP 8.1+)
             let mut file_handle = ZendFileHandle {
-                handle: ptr::null_mut(),
                 filename: path_cstr.as_ptr(),
                 opened_path: ptr::null_mut(),
-                handle_type: ZEND_HANDLE_FILENAME,
-                free_filename: false,
+                handle_type: ZEND_HANDLE_FILENAME as u8,
+                primary_script: true,
+                in_list: false,
+                buf: ptr::null_mut(),
+                buf_len: 0,
             };
+
+            // Initialize file handle using zend_stream_init_filename if available (PHP 8.1+)
+            if let Some(ref init_fn) = self.zend_stream_init_filename {
+                let init_result = (init_fn)(&mut file_handle, path_cstr.as_ptr());
+                if init_result != 0 {
+                    return Err(anyhow::anyhow!(
+                        "zend_stream_init_filename failed with code {}: {}",
+                        init_result,
+                        script_path
+                    ));
+                }
+            }
 
             // Execute the script
             let result = (self.php_execute_script)(&mut file_handle);
