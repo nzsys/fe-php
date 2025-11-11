@@ -35,14 +35,14 @@ pub async fn run(args: SandboxArgs) -> Result<()> {
     // 4. Detect issues (memory leaks, performance degradation, error rate increase)
     // 5. Generate a report
 
-    println!(" Sandbox test completed successfully");
+    println!("[OK] Sandbox test completed successfully");
     println!();
     println!("Results:");
     println!("  Memory leak: None detected");
     println!("  Response time: Within acceptable range");
     println!("  Error rate: 0.0%");
     println!();
-    println!("=¡ Configuration appears safe to deploy");
+    println!("[*] Configuration appears safe to deploy");
 
     Ok(())
 }
