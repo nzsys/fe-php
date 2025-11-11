@@ -25,6 +25,8 @@ pub struct Config {
     pub tracing: TracingConfig,
     #[serde(default)]
     pub load_balancing: LoadBalancingConfig,
+    #[serde(default)]
+    pub deployment: DeploymentConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -493,6 +495,101 @@ fn default_success_threshold() -> u32 {
 
 fn default_timeout_seconds() -> u64 {
     60
+}
+
+// Deployment configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DeploymentConfig {
+    #[serde(default)]
+    pub enable: bool,
+    #[serde(default = "default_deployment_strategy")]
+    pub strategy: String,  // "ab_test" or "canary"
+    #[serde(default)]
+    pub variants: Vec<VariantConfig>,
+    #[serde(default)]
+    pub sticky_sessions: bool,
+    #[serde(default)]
+    pub ab_test: AbTestConfig,
+    #[serde(default)]
+    pub canary: CanaryConfig,
+}
+
+impl Default for DeploymentConfig {
+    fn default() -> Self {
+        Self {
+            enable: false,
+            strategy: default_deployment_strategy(),
+            variants: Vec::new(),
+            sticky_sessions: true,
+            ab_test: AbTestConfig::default(),
+            canary: CanaryConfig::default(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VariantConfig {
+    pub name: String,
+    pub weight: u32,
+    pub upstream: String,
+    #[serde(default = "default_true")]
+    pub metrics_tracking: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AbTestConfig {
+    #[serde(default = "default_true")]
+    pub track_conversion: bool,
+    #[serde(default = "default_min_requests")]
+    pub min_requests_per_variant: u64,
+}
+
+impl Default for AbTestConfig {
+    fn default() -> Self {
+        Self {
+            track_conversion: true,
+            min_requests_per_variant: default_min_requests(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CanaryConfig {
+    #[serde(default = "default_max_error_rate")]
+    pub max_error_rate: f64,
+    #[serde(default)]
+    pub max_response_time_ms: Option<u64>,
+    #[serde(default = "default_min_observation_period")]
+    pub min_observation_period_secs: u64,
+    #[serde(default = "default_min_requests")]
+    pub min_requests_before_decision: u64,
+}
+
+impl Default for CanaryConfig {
+    fn default() -> Self {
+        Self {
+            max_error_rate: default_max_error_rate(),
+            max_response_time_ms: None,
+            min_observation_period_secs: default_min_observation_period(),
+            min_requests_before_decision: default_min_requests(),
+        }
+    }
+}
+
+fn default_deployment_strategy() -> String {
+    "ab_test".to_string()
+}
+
+fn default_min_requests() -> u64 {
+    100
+}
+
+fn default_max_error_rate() -> f64 {
+    0.05  // 5%
+}
+
+fn default_min_observation_period() -> u64 {
+    60  // 60 seconds
 }
 
 impl Config {

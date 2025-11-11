@@ -14,6 +14,7 @@ pub mod geoip;
 pub mod redis_session;
 pub mod tracing_telemetry;
 pub mod load_balancing;
+pub mod deployment;
 
 pub use config::Config;
 pub use server::Server;

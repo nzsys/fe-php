@@ -10,6 +10,7 @@ use crate::geoip::GeoIpManager;
 use crate::redis_session::RedisSessionManager;
 use crate::tracing_telemetry::TracingManager;
 use crate::load_balancing::LoadBalancingManager;
+use crate::deployment::DeploymentManager;
 use anyhow::{Context, Result};
 use hyper::server::conn::{http1, http2};
 use hyper::service::service_fn;
@@ -30,6 +31,7 @@ pub struct Server {
     geoip_manager: Option<Arc<GeoIpManager>>,
     redis_manager: Option<Arc<tokio::sync::RwLock<RedisSessionManager>>>,
     load_balancer: Option<Arc<LoadBalancingManager>>,
+    deployment_manager: Option<Arc<DeploymentManager>>,
 }
 
 impl Server {
@@ -120,6 +122,22 @@ impl Server {
             None
         };
 
+        // Initialize deployment (A/B testing or canary) if enabled
+        let deployment_manager = if config.deployment.enable {
+            let dm = DeploymentManager::new(&config.deployment)
+                .context("Failed to initialize deployment manager")?;
+
+            info!(
+                "Deployment strategy '{}' enabled with {} variants",
+                config.deployment.strategy,
+                config.deployment.variants.len()
+            );
+
+            Some(Arc::new(dm))
+        } else {
+            None
+        };
+
         Ok(Self {
             config: Arc::new(config),
             worker_pool: Arc::new(worker_pool),
@@ -128,6 +146,7 @@ impl Server {
             geoip_manager,
             redis_manager,
             load_balancer,
+            deployment_manager,
         })
     }
 
