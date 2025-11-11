@@ -2,7 +2,6 @@ use super::executor::{PhpExecutor, PhpRequest, PhpResponse};
 use super::PhpConfig;
 use anyhow::Result;
 use async_channel::{Sender, Receiver, bounded};
-use std::sync::Arc;
 use tokio::task;
 use tracing::{info, warn, error};
 
@@ -14,11 +13,21 @@ pub struct WorkerPoolConfig {
 pub struct WorkerPool {
     request_tx: Sender<(PhpRequest, Sender<Result<PhpResponse>>)>,
     config: WorkerPoolConfig,
+    _php_module: Option<PhpExecutor>,  // Keep PHP module initialized for process lifetime
 }
 
 impl WorkerPool {
     pub fn new(php_config: PhpConfig, config: WorkerPoolConfig) -> Result<Self> {
         let (request_tx, request_rx) = bounded(config.pool_size * 2);
+
+        // Initialize PHP module ONCE globally (not in worker threads)
+        // This prevents "zend_mm_heap corrupted" error when multiple workers
+        // try to call php_module_startup() simultaneously
+        let php_module = if !php_config.use_fpm {
+            Some(PhpExecutor::new(php_config.clone())?)  // Calls module_startup() once
+        } else {
+            None  // PHP-FPM mode doesn't need global initialization
+        };
 
         // Spawn worker threads
         for worker_id in 0..config.pool_size {
@@ -36,6 +45,7 @@ impl WorkerPool {
         Ok(Self {
             request_tx,
             config,
+            _php_module: php_module,  // Kept alive for process lifetime
         })
     }
 
@@ -48,7 +58,8 @@ impl WorkerPool {
         info!("Worker {} started", worker_id);
 
         // Initialize PHP executor for this worker
-        let executor = match PhpExecutor::new(php_config) {
+        // Use new_worker() to skip module_startup (already called globally)
+        let executor = match PhpExecutor::new_worker(php_config) {
             Ok(exec) => exec,
             Err(e) => {
                 error!("Worker {} failed to initialize PHP: {}", worker_id, e);
