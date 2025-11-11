@@ -38,21 +38,21 @@ Traditional PHP deployment has pain points:
 fe-php solves these with a unified platform:
 
 ```
-Before:                                             After:
-┌─────────────────┐             ┌─────────┐
-│  Load Balancer  │               │             │                  │
-└────────┬────────┘             │                  │
-                  │                               │     fe-php       │
-┌────────┴────────┐             │  (Single Binary) │
-│  nginx + WAF   │                │             │                  │
-└────────┬────────┘             │  • HTTP Server   │
-                  │                               │  • PHP Runtime   │
-┌────────┴────────┐             │  • WAF           │
-│    PHP-FPM      │               │             │  • Metrics       │
-└────────┬────────┘             │  • Logging       │
-                  │                               │  • Admin API     │
-┌────────┴────────┐             │                  │
-│   Monitoring    │               │             └─────────┘
+Before:                          After:
+┌─────────────────┐             ┌─────────────────┐
+│  Load Balancer  │             │                 │
+└────────┬────────┘             │                 │
+         │                      │    fe-php       │
+┌────────┴────────┐             │  (Single Binary)│
+│  nginx + WAF    │             │                 │
+└────────┬────────┘             │  • HTTP Server  │
+         │                      │  • PHP Runtime  │
+┌────────┴────────┐             │  • WAF          │
+│    PHP-FPM      │             │  • Metrics      │
+└────────┬────────┘             │  • Logging      │
+         │                      │  • Admin API    │
+┌────────┴────────┐             │                 │
+│   Monitoring    │             └─────────────────┘
 └─────────────────┘
 ```
 
@@ -91,9 +91,9 @@ Before:                                             After:
 ## Architecture
 
 ```
-┌──────────────────────────┐
+┌────────────────────────────────────────────────────┐
 │           fe-php (Single Binary)                   │
-├──────────────────────────┤
+├────────────────────────────────────────────────────┤
 │                                                    │
 │ CLI Layer                                          │
 │ ├─ serve      : Start HTTP server                │
@@ -101,53 +101,53 @@ Before:                                             After:
 │ ├─ config     : Manage configurations            │
 │ ├─ sandbox    : Safe pre-production testing      │
 │ ├─ compare    : Compare config performance       │
-│ └─ waf        : WAF management                   │
+│ └─ waf        : WAF management                    │
 │                                                    │
-├──────────────────────────┤
+├────────────────────────────────────────────────────┤
 │                                                    │
-│ HTTP Server (Tokio + Hyper)                        │
+│ HTTP Server (Tokio + Hyper)                       │
 │ ├─ TCP Listener (async, non-blocking)            │
 │ ├─ Connection Manager (keep-alive)               │
 │ └─ Request Dispatcher                            │
 │                                                    │
-├──────────────────────────┤
+├────────────────────────────────────────────────────┤
 │                                                    │
-│ Middleware Chain                                   │
+│ Middleware Chain                                  │
 │ ├─ Request Validation                            │
 │ ├─ WAF Engine (OWASP rules)                      │
 │ ├─ Rate Limiting (per-IP)                        │
 │ └─ Metrics Recording                             │
 │                                                    │
-├──────────────────────────┤
+├────────────────────────────────────────────────────┤
 │                                                    │
-│ PHP Worker Pool                                    │
-│ ├─ Worker 0 ──┐                               │
-│ ├─ Worker 1 ──┼─→ async_channel Queue       │
-│ ├─ Worker 2 ──┤   (load balancing)            │
-│ └─ Worker N ──┘                               │
+│ PHP Worker Pool                                   │
+│ ├─ Worker 0 ──┐                                  │
+│ ├─ Worker 1 ──┼─→ async_channel Queue             │
+│ ├─ Worker 2 ──┤   (load balancing)               │
+│ └─ Worker N ──┘                                  │
 │                                                    │
-│ Features:                                          │
-│ • Automatic restart after N requests               │
-│ • Memory leak prevention                           │
-│ • Health monitoring                                │
+│ Features:                                         │
+│ • Automatic restart after N requests              │
+│ • Memory leak prevention                          │
+│ • Health monitoring                               │
 │                                                    │
-├──────────────────────────┤
+├────────────────────────────────────────────────────┤
 │                                                    │
-│ PHP Runtime (FFI to libphp.so)                     │
+│ PHP Runtime (FFI to libphp.so)                    │
 │ ├─ php_module_startup                            │
 │ ├─ php_request_startup/shutdown                  │
 │ ├─ php_execute_script                            │
 │ └─ OPcache management                            │
 │                                                    │
-├──────────────────────────┤
+├────────────────────────────────────────────────────┤
 │                                                    │
-│ Observability Layer                                │
+│ Observability Layer                              │
 │ ├─ Prometheus Metrics (/_metrics)                │
 │ ├─ Structured JSON Logging (stdout)              │
 │ ├─ Admin API (HTTP + Unix socket)                │
 │ └─ Health Checks (/_health)                      │
 │                                                    │
-└──────────────────────────┘
+└────────────────────────────────────────────────────┘
 ```
 
 ### Request Flow
