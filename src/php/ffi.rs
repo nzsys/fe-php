@@ -51,9 +51,10 @@ pub struct SapiModule {
     pub input_filter_init: Option<extern "C" fn() -> c_uint>,
 }
 
-// Output buffer storage (thread-local)
+// Output buffer storage (thread-local with optimized capacity)
+// Most PHP responses are < 64KB, pre-allocate to avoid reallocations
 thread_local! {
-    static OUTPUT_BUFFER: Mutex<Vec<u8>> = Mutex::new(Vec::with_capacity(8192));
+    static OUTPUT_BUFFER: Mutex<Vec<u8>> = Mutex::new(Vec::with_capacity(65536));
 }
 
 /// Callback for PHP output - captures to thread-local buffer
@@ -192,10 +193,15 @@ impl PhpFfi {
 
     /// Start a PHP request
     pub fn request_startup(&self) -> Result<()> {
-        // Clear output buffer
+        // Clear output buffer (preserves capacity for reuse - buffer pooling)
         OUTPUT_BUFFER.with(|buf| {
             if let Ok(mut buffer) = buf.lock() {
-                buffer.clear();
+                buffer.clear(); // Keeps allocated memory for next request
+
+                // Shrink if buffer grew too large (> 1MB) to prevent memory bloat
+                if buffer.capacity() > 1024 * 1024 {
+                    buffer.shrink_to(65536);
+                }
             }
         });
 

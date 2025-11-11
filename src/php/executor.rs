@@ -4,6 +4,7 @@ use super::PhpConfig;
 use anyhow::{Context, Result};
 use std::collections::HashMap;
 use std::path::PathBuf;
+use memchr::memmem;
 
 #[derive(Debug, Clone)]
 pub struct PhpRequest {
@@ -137,22 +138,23 @@ impl PhpExecutor {
         self.parse_headers_and_body(data)
     }
 
-    /// Parse headers and body from raw output
+    /// Parse headers and body from raw output (optimized with memchr)
     fn parse_headers_and_body(&self, data: &[u8]) -> Result<(u16, HashMap<String, String>, Vec<u8>)> {
         let mut status_code = 200u16;
-        let mut headers = HashMap::new();
+        let mut headers = HashMap::with_capacity(8); // Pre-allocate for typical header count
         let mut body_start = 0;
 
-        // Find header/body separator (\r\n\r\n or \n\n)
-        let separator: &[u8] = if let Some(pos) = data.windows(4).position(|w| w == b"\r\n\r\n") {
+        // Find header/body separator using fast memmem search
+        let separator: &[u8];
+        if let Some(pos) = memmem::find(data, b"\r\n\r\n") {
             body_start = pos + 4;
-            b"\r\n"
-        } else if let Some(pos) = data.windows(2).position(|w| w == b"\n\n") {
+            separator = b"\r\n";
+        } else if let Some(pos) = memmem::find(data, b"\n\n") {
             body_start = pos + 2;
-            b"\n"
+            separator = b"\n";
         } else {
             // No separator found, treat all as body
-            let mut headers = HashMap::new();
+            let mut headers = HashMap::with_capacity(1);
             headers.insert("Content-Type".to_string(), "text/html; charset=UTF-8".to_string());
             return Ok((200, headers, data.to_vec()));
         };
