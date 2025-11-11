@@ -1,0 +1,62 @@
+# fe-php Sample Configuration
+# All-in-one PHP Application Platform
+
+[server]
+host = "0.0.0.0"
+port = 8080
+# Number of worker threads (default: CPU cores)
+workers = 8
+
+[php]
+# Path to libphp.so (adjust for your system)
+# FreeBSD: /usr/local/lib/libphp.so
+# Linux: /usr/lib/libphp.so or /usr/lib/x86_64-linux-gnu/libphp.so
+libphp_path = "/usr/local/lib/libphp.so"
+
+# Document root for PHP files
+document_root = "/var/www/html"
+
+# PHP worker pool size
+worker_pool_size = 8
+
+# Max requests per worker before restart (prevents memory leaks)
+worker_max_requests = 1000
+
+[php.opcache]
+enable = true
+memory_size = "256M"
+max_files = 10000
+# Set to false in production for better performance
+validate_timestamps = false
+
+[logging]
+# Levels: trace, debug, info, warn, error
+level = "info"
+
+# Formats: json, pretty
+format = "json"
+
+# Output: stdout, file:/path/to/log
+output = "stdout"
+
+[metrics]
+enable = true
+endpoint = "/_metrics"
+port = 9090
+
+[waf]
+enable = true
+# Modes: off, learn, detect, block
+mode = "block"
+rules_path = "examples/waf_rules.toml"
+
+[waf.rate_limit]
+requests_per_ip = 100
+window_seconds = 60
+burst = 10
+
+[admin]
+enable = true
+unix_socket = "/var/run/fe-php.sock"
+http_port = 9000
+allowed_ips = ["127.0.0.1"]

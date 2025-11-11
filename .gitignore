@@ -1,0 +1,26 @@
+# Rust
+/target/
+Cargo.lock
+**/*.rs.bk
+*.pdb
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Config backups
+~/.fe-php/
+
+# Logs
+*.log
+
+# Runtime
+*.pid
+*.sock
