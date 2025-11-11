@@ -15,6 +15,16 @@ pub struct Config {
     pub waf: WafConfig,
     #[serde(default)]
     pub admin: AdminConfig,
+    #[serde(default)]
+    pub tls: TlsConfig,
+    #[serde(default)]
+    pub geoip: GeoIpConfig,
+    #[serde(default)]
+    pub redis: RedisConfig,
+    #[serde(default)]
+    pub tracing: TracingConfig,
+    #[serde(default)]
+    pub load_balancing: LoadBalancingConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -25,6 +35,12 @@ pub struct ServerConfig {
     pub port: u16,
     #[serde(default = "default_workers")]
     pub workers: usize,
+    #[serde(default)]
+    pub enable_http2: bool,
+    #[serde(default)]
+    pub multi_process: bool,
+    #[serde(default = "default_workers")]
+    pub process_count: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -223,6 +239,260 @@ impl Default for AdminConfig {
             allowed_ips: default_allowed_ips(),
         }
     }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TlsConfig {
+    #[serde(default)]
+    pub enable: bool,
+    #[serde(default)]
+    pub cert_path: Option<PathBuf>,
+    #[serde(default)]
+    pub key_path: Option<PathBuf>,
+    #[serde(default)]
+    pub ca_cert_path: Option<PathBuf>,
+    #[serde(default)]
+    pub alpn_protocols: Vec<String>,
+}
+
+impl Default for TlsConfig {
+    fn default() -> Self {
+        Self {
+            enable: false,
+            cert_path: None,
+            key_path: None,
+            ca_cert_path: None,
+            alpn_protocols: vec!["h2".to_string(), "http/1.1".to_string()],
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GeoIpConfig {
+    #[serde(default)]
+    pub enable: bool,
+    #[serde(default)]
+    pub database_path: Option<PathBuf>,
+    #[serde(default)]
+    pub allowed_countries: Vec<String>,
+    #[serde(default)]
+    pub blocked_countries: Vec<String>,
+}
+
+impl Default for GeoIpConfig {
+    fn default() -> Self {
+        Self {
+            enable: false,
+            database_path: None,
+            allowed_countries: Vec::new(),
+            blocked_countries: Vec::new(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RedisConfig {
+    #[serde(default)]
+    pub enable: bool,
+    #[serde(default = "default_redis_url")]
+    pub url: String,
+    #[serde(default = "default_redis_pool_size")]
+    pub pool_size: u32,
+    #[serde(default = "default_redis_timeout")]
+    pub timeout_ms: u64,
+    #[serde(default = "default_redis_prefix")]
+    pub key_prefix: String,
+}
+
+impl Default for RedisConfig {
+    fn default() -> Self {
+        Self {
+            enable: false,
+            url: default_redis_url(),
+            pool_size: default_redis_pool_size(),
+            timeout_ms: default_redis_timeout(),
+            key_prefix: default_redis_prefix(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TracingConfig {
+    #[serde(default)]
+    pub enable: bool,
+    #[serde(default = "default_otlp_endpoint")]
+    pub otlp_endpoint: String,
+    #[serde(default = "default_service_name")]
+    pub service_name: String,
+    #[serde(default = "default_sample_rate")]
+    pub sample_rate: f64,
+}
+
+impl Default for TracingConfig {
+    fn default() -> Self {
+        Self {
+            enable: false,
+            otlp_endpoint: default_otlp_endpoint(),
+            service_name: default_service_name(),
+            sample_rate: default_sample_rate(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LoadBalancingConfig {
+    #[serde(default)]
+    pub enable: bool,
+    #[serde(default)]
+    pub upstreams: Vec<UpstreamConfig>,
+    #[serde(default = "default_lb_algorithm")]
+    pub algorithm: String,
+    #[serde(default)]
+    pub health_check: HealthCheckConfig,
+    #[serde(default)]
+    pub circuit_breaker: CircuitBreakerConfig,
+}
+
+impl Default for LoadBalancingConfig {
+    fn default() -> Self {
+        Self {
+            enable: false,
+            upstreams: Vec::new(),
+            algorithm: default_lb_algorithm(),
+            health_check: HealthCheckConfig::default(),
+            circuit_breaker: CircuitBreakerConfig::default(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpstreamConfig {
+    pub name: String,
+    pub url: String,
+    #[serde(default = "default_weight")]
+    pub weight: u32,
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HealthCheckConfig {
+    #[serde(default = "default_true")]
+    pub enable: bool,
+    #[serde(default = "default_health_check_path")]
+    pub path: String,
+    #[serde(default = "default_health_check_interval")]
+    pub interval_seconds: u64,
+    #[serde(default = "default_health_check_timeout")]
+    pub timeout_seconds: u64,
+    #[serde(default = "default_unhealthy_threshold")]
+    pub unhealthy_threshold: u32,
+    #[serde(default = "default_healthy_threshold")]
+    pub healthy_threshold: u32,
+}
+
+impl Default for HealthCheckConfig {
+    fn default() -> Self {
+        Self {
+            enable: true,
+            path: default_health_check_path(),
+            interval_seconds: default_health_check_interval(),
+            timeout_seconds: default_health_check_timeout(),
+            unhealthy_threshold: default_unhealthy_threshold(),
+            healthy_threshold: default_healthy_threshold(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CircuitBreakerConfig {
+    #[serde(default = "default_true")]
+    pub enable: bool,
+    #[serde(default = "default_failure_threshold")]
+    pub failure_threshold: u32,
+    #[serde(default = "default_success_threshold")]
+    pub success_threshold: u32,
+    #[serde(default = "default_timeout_seconds")]
+    pub timeout_seconds: u64,
+}
+
+impl Default for CircuitBreakerConfig {
+    fn default() -> Self {
+        Self {
+            enable: true,
+            failure_threshold: default_failure_threshold(),
+            success_threshold: default_success_threshold(),
+            timeout_seconds: default_timeout_seconds(),
+        }
+    }
+}
+
+fn default_redis_url() -> String {
+    "redis://127.0.0.1:6379".to_string()
+}
+
+fn default_redis_pool_size() -> u32 {
+    10
+}
+
+fn default_redis_timeout() -> u64 {
+    5000
+}
+
+fn default_redis_prefix() -> String {
+    "fe_php:".to_string()
+}
+
+fn default_otlp_endpoint() -> String {
+    "http://localhost:4317".to_string()
+}
+
+fn default_service_name() -> String {
+    "fe-php".to_string()
+}
+
+fn default_sample_rate() -> f64 {
+    1.0
+}
+
+fn default_lb_algorithm() -> String {
+    "round_robin".to_string()
+}
+
+fn default_weight() -> u32 {
+    1
+}
+
+fn default_health_check_path() -> String {
+    "/_health".to_string()
+}
+
+fn default_health_check_interval() -> u64 {
+    30
+}
+
+fn default_health_check_timeout() -> u64 {
+    5
+}
+
+fn default_unhealthy_threshold() -> u32 {
+    3
+}
+
+fn default_healthy_threshold() -> u32 {
+    2
+}
+
+fn default_failure_threshold() -> u32 {
+    5
+}
+
+fn default_success_threshold() -> u32 {
+    2
+}
+
+fn default_timeout_seconds() -> u64 {
+    60
 }
 
 impl Config {
