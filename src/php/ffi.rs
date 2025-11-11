@@ -1,13 +1,28 @@
 use anyhow::{Context, Result};
 use libloading::{Library, Symbol};
-use std::ffi::CString;
+use std::ffi::{CStr, CString};
 use std::os::raw::{c_char, c_int, c_void, c_uint};
 use std::path::Path;
 use std::ptr;
 use std::sync::Mutex;
 
 // PHP types
-type ZendFileHandle = c_void;
+type ZvalPtr = *mut c_void;
+
+// zend_file_handle type constants (PHP 8.0+)
+const ZEND_HANDLE_FILENAME: c_int = 0;
+const ZEND_HANDLE_FP: c_int = 1;
+const ZEND_HANDLE_STREAM: c_int = 2;
+
+/// PHP zend_file_handle structure (simplified for PHP 8.0+)
+#[repr(C)]
+pub struct ZendFileHandle {
+    pub handle: *mut c_void,
+    pub filename: *const c_char,
+    pub opened_path: *mut c_char,
+    pub handle_type: c_int,
+    pub free_filename: bool,
+}
 
 /// PHP SAPI module structure
 #[repr(C)]
@@ -72,6 +87,43 @@ extern "C" fn php_output_handler(output: *const c_char, output_len: c_uint) -> c
     }
 
     output_len
+}
+
+/// Stub callback for registering server variables
+/// PHP calls this during request startup to populate $_SERVER
+extern "C" fn php_register_variables(_track_vars_array: *mut c_void) {
+    // Stub implementation - in production, this would populate $_SERVER with CGI variables
+    // For now, we just need this to exist so PHP doesn't crash
+}
+
+/// Stub callback for reading POST data
+extern "C" fn php_read_post(_buffer: *mut c_char, _count: c_uint) -> c_uint {
+    // Stub implementation - return 0 (no POST data)
+    0
+}
+
+/// Stub callback for reading cookies
+extern "C" fn php_read_cookies() -> *mut c_char {
+    // Stub implementation - return null (no cookies)
+    ptr::null_mut()
+}
+
+/// Stub callback for logging messages
+extern "C" fn php_log_message(message: *const c_char, _syslog_type: c_int) {
+    // Log PHP messages to stderr
+    if !message.is_null() {
+        unsafe {
+            let msg = CStr::from_ptr(message);
+            if let Ok(s) = msg.to_str() {
+                eprintln!("[PHP] {}", s);
+            }
+        }
+    }
+}
+
+/// Stub callback for flushing output
+extern "C" fn php_flush(_server_context: *mut c_void) {
+    // Stub implementation - we buffer everything until request completes
 }
 
 /// PHP FFI bindings
@@ -155,9 +207,6 @@ impl PhpFfi {
             if !self.sapi_module.is_null() {
                 let sapi = &mut *self.sapi_module;
 
-                // Set output handler to capture PHP output
-                sapi.ub_write = Some(php_output_handler);
-
                 // Set SAPI name
                 let name = CString::new("fe-php").unwrap();
                 sapi.name = name.as_ptr();
@@ -167,6 +216,14 @@ impl PhpFfi {
                 // Prevent memory leaks by not freeing these strings
                 std::mem::forget(name);
                 std::mem::forget(pretty_name);
+
+                // Set required callbacks
+                sapi.ub_write = Some(php_output_handler);
+                sapi.flush = Some(php_flush);
+                sapi.register_server_variables = Some(php_register_variables);
+                sapi.read_post = Some(php_read_post);
+                sapi.read_cookies = Some(php_read_cookies);
+                sapi.log_message = Some(php_log_message);
             }
 
             // Call PHP module startup
@@ -222,36 +279,53 @@ impl PhpFfi {
 
     /// Execute a PHP script using embedded libphp
     pub fn execute_script(&self, script_path: &str) -> Result<Vec<u8>> {
-        // Simplified implementation: Read and eval the PHP code
-        // This avoids complex zend_file_handle setup
-        // Performance is still excellent compared to process spawning
+        // Verify file exists
+        if !Path::new(script_path).exists() {
+            return Err(anyhow::anyhow!("PHP script not found: {}", script_path));
+        }
 
-        let php_code = std::fs::read_to_string(script_path)
-            .with_context(|| format!("Failed to read PHP script: {}", script_path))?;
+        unsafe {
+            // Create CString for the script path (must live for the duration of the call)
+            let path_cstr = CString::new(script_path)
+                .with_context(|| format!("Invalid script path: {}", script_path))?;
 
-        // Use zval_eval_string approach (simpler than file_handle)
-        // For production: Consider using php_compile_file + zend_execute
-        self.eval_code(&php_code)
-    }
+            // Create zend_file_handle structure
+            let mut file_handle = ZendFileHandle {
+                handle: ptr::null_mut(),
+                filename: path_cstr.as_ptr(),
+                opened_path: ptr::null_mut(),
+                handle_type: ZEND_HANDLE_FILENAME,
+                free_filename: false,
+            };
 
-    /// Evaluate PHP code directly (internal helper)
-    fn eval_code(&self, _php_code: &str) -> Result<Vec<u8>> {
-        // Note: This is a simplified stub
-        // Real implementation would use zend_eval_string or similar
-        // For now, return a helpful error message
+            // Execute the script
+            let result = (self.php_execute_script)(&mut file_handle);
 
-        // Since we can't properly implement eval without more PHP internals,
-        // we'll use a workaround: execute via include
-        // This requires proper zend_file_handle setup which is complex
+            if result != 0 {
+                // Get output even on error (might contain error messages)
+                let output = OUTPUT_BUFFER.with(|buf| {
+                    buf.lock().ok().map(|b| b.clone()).unwrap_or_default()
+                });
 
-        // For the prototype, we'll just return empty output
-        // Users should use use_fpm=true until full libphp integration is complete
+                if !output.is_empty() {
+                    // Return output even if script failed (contains error messages)
+                    return Ok(output);
+                }
 
-        Err(anyhow::anyhow!(
-            "libphp execution not fully implemented yet. \
-            Please use use_fpm=true in config.toml for now. \
-            Full libphp support requires complete zend_file_handle implementation."
-        ))
+                return Err(anyhow::anyhow!(
+                    "PHP script execution failed with code {}: {}",
+                    result,
+                    script_path
+                ));
+            }
+        }
+
+        // Get captured output
+        let output = OUTPUT_BUFFER.with(|buf| {
+            buf.lock().ok().map(|b| b.clone()).unwrap_or_default()
+        });
+
+        Ok(output)
     }
 
     /// Get output buffer contents

@@ -1,0 +1,47 @@
+# Test configuration with user's settings
+[server]
+host = "localhost"
+port = 8080
+workers = 8
+
+[php]
+libphp_path = "/usr/local/php-embed/lib/libphp.dylib"
+document_root = "/Users/nzsys/Web"
+worker_pool_size = 8
+worker_max_requests = 10000
+
+# For testing, let's use PHP-FPM mode which is production-ready
+use_fpm = true
+fpm_socket = "127.0.0.1:9000"
+
+[php.opcache]
+enable = true
+memory_size = "256M"
+max_files = 10000
+validate_timestamps = false
+
+[logging]
+level = "info"
+format = "json"
+output = "stdout"
+
+[metrics]
+enable = true
+endpoint = "/_metrics"
+port = 9090
+
+[waf]
+enable = true
+mode = "block"
+rules_path = "examples/waf_rules.toml"
+
+[waf.rate_limit]
+requests_per_ip = 100
+window_seconds = 60
+burst = 10
+
+[admin]
+enable = true
+unix_socket = "/var/run/fe-php.sock"
+http_port = 9000
+allowed_ips = ["127.0.0.1"]
