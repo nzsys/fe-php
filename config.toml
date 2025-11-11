@@ -1,4 +1,4 @@
-# fe-php Test Configuration
+# fe-php Configuration
 
 [server]
 host = "0.0.0.0"
@@ -6,12 +6,19 @@ port = 8080
 workers = 8
 
 [php]
-libphp_path = "/usr/local/lib/libphp.so"
+# Path to libphp.so (adjust for your system)
+# Debian/Ubuntu: /usr/lib/libphp.so or /usr/lib/x86_64-linux-gnu/libphp.so
+# From source: /usr/local/lib/libphp.so
+# macOS: /opt/homebrew/lib/libphp.dylib
+libphp_path = "/usr/lib/libphp.so"
+
 document_root = "/var/www/html"
 worker_pool_size = 8
 worker_max_requests = 1000
 
-# Use CLI mode for now (PHP-FPM not available)
+# Embedded libphp mode (recommended for performance)
+# Set to false to use embedded libphp (FrankenPHP-style, 50-100x faster)
+# Set to true to fallback to PHP-FPM (if libphp not available)
 use_fpm = false
 fpm_socket = "127.0.0.1:9000"
 

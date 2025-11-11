@@ -1,9 +1,10 @@
 use super::ffi::PhpFfi;
 use super::fastcgi::FastCgiClient;
 use super::PhpConfig;
-use anyhow::Result;
+use anyhow::{Context, Result};
 use std::collections::HashMap;
 use std::path::PathBuf;
+use memchr::memmem;
 
 #[derive(Debug, Clone)]
 pub struct PhpRequest {
@@ -89,58 +90,106 @@ impl PhpExecutor {
                 memory_peak_mb: 0.0,
             })
         } else {
-            // Execute via PHP CLI (legacy mode)
+            // Execute via embedded libphp (high performance mode)
             let ffi = self.ffi.as_ref().unwrap();
-            let output = ffi.execute_script(script_path.to_str().unwrap())?;
+
+            // Start request
+            ffi.request_startup()
+                .context("Failed to start PHP request")?;
+
+            // Execute script
+            let output = match ffi.execute_script(script_path.to_str().unwrap()) {
+                Ok(out) => out,
+                Err(e) => {
+                    ffi.request_shutdown();
+                    return Err(e);
+                }
+            };
+
+            // Shutdown request
+            ffi.request_shutdown();
 
             let execution_time_ms = start.elapsed().as_millis() as u64;
 
-            // Build response
-            let mut headers = HashMap::new();
-            headers.insert("Content-Type".to_string(), "text/html; charset=UTF-8".to_string());
+            // Parse output for headers (PHP can output headers)
+            let (status_code, headers, body) = self.parse_php_output(&output)?;
 
             Ok(PhpResponse {
-                status_code: 200,
+                status_code,
                 headers,
-                body: output.into_bytes(),
+                body,
                 execution_time_ms,
                 memory_peak_mb: 0.0,
             })
         }
     }
 
-    fn parse_fastcgi_response(&self, data: &[u8]) -> Result<(u16, HashMap<String, String>, Vec<u8>)> {
-        let response_str = String::from_utf8_lossy(data);
-        let mut lines = response_str.lines();
+    /// Parse PHP output (handles both raw output and headers)
+    fn parse_php_output(&self, data: &[u8]) -> Result<(u16, HashMap<String, String>, Vec<u8>)> {
+        // Check if output contains headers (starts with header line)
+        // PHP can output headers using header() function
+        if data.len() < 4 || !data.starts_with(b"HTTP/") && !data.starts_with(b"Status:") && !data.starts_with(b"Content-Type:") {
+            // No headers, just body content
+            let mut headers = HashMap::new();
+            headers.insert("Content-Type".to_string(), "text/html; charset=UTF-8".to_string());
+            return Ok((200, headers, data.to_vec()));
+        }
 
+        self.parse_headers_and_body(data)
+    }
+
+    /// Parse headers and body from raw output (optimized with memchr)
+    fn parse_headers_and_body(&self, data: &[u8]) -> Result<(u16, HashMap<String, String>, Vec<u8>)> {
         let mut status_code = 200u16;
-        let mut headers = HashMap::new();
+        let mut headers = HashMap::with_capacity(8); // Pre-allocate for typical header count
         let mut body_start = 0;
 
+        // Find header/body separator using fast memmem search
+        let separator: &[u8];
+        if let Some(pos) = memmem::find(data, b"\r\n\r\n") {
+            body_start = pos + 4;
+            separator = b"\r\n";
+        } else if let Some(pos) = memmem::find(data, b"\n\n") {
+            body_start = pos + 2;
+            separator = b"\n";
+        } else {
+            // No separator found, treat all as body
+            let mut headers = HashMap::with_capacity(1);
+            headers.insert("Content-Type".to_string(), "text/html; charset=UTF-8".to_string());
+            return Ok((200, headers, data.to_vec()));
+        };
+
         // Parse headers
-        for (i, line) in response_str.lines().enumerate() {
+        let header_data = &data[..body_start];
+        for line in header_data.split(|&b| b == separator[0]) {
             if line.is_empty() {
-                // Empty line marks end of headers
-                body_start = response_str.lines().take(i + 1).map(|l| l.len() + 1).sum();
-                break;
+                continue;
             }
 
-            if let Some((name, value)) = line.split_once(':') {
-                let name = name.trim().to_string();
-                let value = value.trim().to_string();
+            // Convert to string for parsing
+            let line_str = String::from_utf8_lossy(line);
+
+            if let Some((name, value)) = line_str.split_once(':') {
+                let name = name.trim();
+                let value = value.trim();
 
                 if name.eq_ignore_ascii_case("Status") {
                     // Parse status code from "Status: 200 OK"
                     if let Some(code_str) = value.split_whitespace().next() {
                         status_code = code_str.parse().unwrap_or(200);
                     }
-                } else {
-                    headers.insert(name, value);
+                } else if !name.is_empty() {
+                    headers.insert(name.to_string(), value.to_string());
                 }
             }
         }
 
-        // Extract body
+        // Ensure Content-Type header exists
+        if !headers.contains_key("Content-Type") && !headers.contains_key("content-type") {
+            headers.insert("Content-Type".to_string(), "text/html; charset=UTF-8".to_string());
+        }
+
+        // Extract body (zero-copy slice)
         let body = if body_start < data.len() {
             data[body_start..].to_vec()
         } else {
@@ -148,6 +197,11 @@ impl PhpExecutor {
         };
 
         Ok((status_code, headers, body))
+    }
+
+    fn parse_fastcgi_response(&self, data: &[u8]) -> Result<(u16, HashMap<String, String>, Vec<u8>)> {
+        // Reuse the same parser for FastCGI responses
+        self.parse_headers_and_body(data)
     }
 
     fn resolve_script_path(&self, uri: &str) -> Result<PathBuf> {
