@@ -120,7 +120,7 @@ impl PhpExecutor {
     fn parse_headers_and_body(&self, data: &[u8]) -> Result<(u16, HashMap<String, String>, Vec<u8>)> {
         let mut status_code = 200u16;
         let mut headers = HashMap::with_capacity(8); // Pre-allocate for typical header count
-        let mut body_start = 0;
+        let body_start: usize;
 
         // Find header/body separator using fast memmem search
         let separator: &[u8];

@@ -11,7 +11,8 @@ use libloading::os::unix::Library as UnixLibrary;
 #[cfg(unix)]
 use std::os::raw::c_int as flag_type;
 
-// PHP types
+// PHP types (kept for future use)
+#[allow(dead_code)]
 type ZvalPtr = *mut c_void;
 
 // zend_stream_type enum (PHP 8.1+)
@@ -176,6 +177,7 @@ extern "C" fn php_flush(_server_context: *mut c_void) {
 
 /// PHP FFI bindings
 pub struct PhpFfi {
+    #[allow(dead_code)]
     library: Library,
     // Function pointers
     php_module_startup: Symbol<'static, unsafe extern "C" fn(*mut SapiModule, *mut c_void) -> c_int>,

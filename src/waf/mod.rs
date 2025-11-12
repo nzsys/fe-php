@@ -3,8 +3,6 @@ pub mod rules;
 
 pub use engine::WafEngine;
 pub use rules::{WafRule, WafAction, WafSeverity};
-
-use anyhow::Result;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

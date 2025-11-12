@@ -29,8 +29,11 @@ pub struct Server {
     metrics: Arc<MetricsCollector>,
     tls_manager: Option<Arc<TlsManager>>,
     geoip_manager: Option<Arc<GeoIpManager>>,
+    #[allow(dead_code)]
     redis_manager: Option<Arc<tokio::sync::RwLock<RedisSessionManager>>>,
+    #[allow(dead_code)]
     load_balancer: Option<Arc<LoadBalancingManager>>,
+    #[allow(dead_code)]
     deployment_manager: Option<Arc<DeploymentManager>>,
 }
 

@@ -2,10 +2,11 @@ use anyhow::{Context, Result};
 use redis::{aio::ConnectionManager, AsyncCommands, Client};
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
-use tracing::{debug, error};
+use tracing::debug;
 
 /// Redis session manager for distributed session storage
 pub struct RedisSessionManager {
+    #[allow(dead_code)]
     client: Client,
     connection_manager: ConnectionManager,
     key_prefix: String,
@@ -48,7 +49,7 @@ impl RedisSessionManager {
         let ttl_seconds = ttl.unwrap_or(self.default_ttl).as_secs();
 
         self.connection_manager
-            .set_ex(&key, value, ttl_seconds as u64)
+            .set_ex::<_, _, ()>(&key, value, ttl_seconds as u64)
             .await
             .context("Failed to set session in Redis")?;
 

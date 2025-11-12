@@ -1,4 +1,4 @@
-use super::rules::{WafRule, WafAction, WafField};
+use super::rules::{WafRule, WafField};
 use crate::metrics::MetricsCollector;
 use std::collections::HashMap;
 use std::sync::Arc;

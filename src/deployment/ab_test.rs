@@ -2,12 +2,13 @@ use anyhow::Result;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
-use tracing::{info, debug};
+use tracing::info;
 
 use crate::config::{VariantConfig, AbTestConfig};
 
 /// A/B test manager for tracking and analyzing variant performance
 pub struct AbTestManager {
+    #[allow(dead_code)]
     variants: Vec<VariantConfig>,
     config: AbTestConfig,
     stats: HashMap<String, Arc<VariantStats>>,

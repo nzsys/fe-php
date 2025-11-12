@@ -23,7 +23,7 @@ impl UnixSocketServer {
 
         loop {
             match listener.accept().await {
-                Ok((stream, _addr)) => {
+                Ok((_stream, _addr)) => {
                     tokio::spawn(async move {
                         // Handle socket connection
                         // In a real implementation, we'd parse commands and execute them

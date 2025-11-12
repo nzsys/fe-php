@@ -14,8 +14,10 @@ pub struct WorkerPoolConfig {
 
 pub struct WorkerPool {
     request_tx: Sender<(PhpRequest, Sender<Result<PhpResponse>>)>,
+    #[allow(dead_code)]
     config: WorkerPoolConfig,
     _php_module: Option<PhpExecutor>,  // Keep PHP module initialized for process lifetime
+    #[allow(dead_code)]
     shared_ffi: Option<Arc<PhpFfi>>,   // Shared FFI instance for all workers
 }
 
