@@ -187,6 +187,7 @@ pub struct PhpFfi {
     php_request_shutdown: Symbol<'static, unsafe extern "C" fn(*mut c_void) -> c_void>,
     php_execute_script: Symbol<'static, unsafe extern "C" fn(*mut ZendFileHandle) -> c_int>,
     zend_stream_init_filename: Symbol<'static, unsafe extern "C" fn(*mut ZendFileHandle, *const c_char)>,
+    zend_stream_open: Symbol<'static, unsafe extern "C" fn(*mut ZendFileHandle) -> c_int>,
     zend_destroy_file_handle: Symbol<'static, unsafe extern "C" fn(*mut ZendFileHandle)>,
     sapi_module: *mut SapiModule,
     // Keep CStrings alive for the lifetime of PhpFfi
@@ -284,6 +285,14 @@ impl PhpFfi {
             std::mem::transmute(symbol)
         };
 
+        // Load zend_stream_open (PHP 8.1+, opens the file handle)
+        let zend_stream_open = unsafe {
+            let symbol: Symbol<unsafe extern "C" fn(*mut ZendFileHandle) -> c_int> =
+                library.get(b"zend_stream_open\0")
+                    .context("Failed to load zend_stream_open")?;
+            std::mem::transmute(symbol)
+        };
+
         // Load zend_destroy_file_handle (for proper cleanup)
         let zend_destroy_file_handle = unsafe {
             let symbol: Symbol<unsafe extern "C" fn(*mut ZendFileHandle)> =
@@ -312,6 +321,7 @@ impl PhpFfi {
             php_request_shutdown,
             php_execute_script,
             zend_stream_init_filename,
+            zend_stream_open,
             zend_destroy_file_handle,
             sapi_module,
             _sapi_name: sapi_name,
@@ -520,8 +530,31 @@ impl PhpFfi {
             file_handle.primary_script = true;
             tracing::info!("  - primary_script flag set to: {}", file_handle.primary_script);
 
-            // Log complete file_handle state before execution
-            tracing::info!("Step 5.9: File handle state summary:");
+            // Log complete file_handle state before opening
+            tracing::info!("Step 5.7: File handle state before zend_stream_open:");
+            tracing::info!("  - handle_type: {}", file_handle.handle_type);
+            tracing::info!("  - primary_script: {}", file_handle.primary_script);
+            tracing::info!("  - in_list: {}", file_handle.in_list);
+            tracing::info!("  - filename ptr: {:p}", file_handle.filename);
+            tracing::info!("  - opened_path ptr: {:p}", file_handle.opened_path);
+
+            // CRITICAL: Open the file handle (PHP 8.1+ requirement)
+            // This step is essential - zend_stream_init_filename() only initializes the structure
+            // but doesn't actually open the file. We must call zend_stream_open() explicitly.
+            tracing::info!("Step 5.8: Calling zend_stream_open()...");
+            let open_result = (self.zend_stream_open)(&mut file_handle);
+            if open_result != 0 {
+                tracing::error!("zend_stream_open() failed with code: {}", open_result);
+                return Err(anyhow::anyhow!(
+                    "Failed to open PHP script {}: zend_stream_open returned {}",
+                    script_path,
+                    open_result
+                ));
+            }
+            tracing::info!("  - zend_stream_open() succeeded with code: {}", open_result);
+
+            // Log complete file_handle state after opening
+            tracing::info!("Step 5.9: File handle state after zend_stream_open:");
             tracing::info!("  - handle_type: {}", file_handle.handle_type);
             tracing::info!("  - primary_script: {}", file_handle.primary_script);
             tracing::info!("  - in_list: {}", file_handle.in_list);
