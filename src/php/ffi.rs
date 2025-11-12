@@ -312,21 +312,29 @@ impl PhpFfi {
 
     /// Initialize PHP module
     pub fn module_startup(&self) -> Result<()> {
+        tracing::info!("=== Starting PHP Module Initialization ===");
+
         unsafe {
             // Configure SAPI module
+            tracing::info!("Step 1: Checking SAPI module pointer...");
             if self.sapi_module.is_null() {
+                tracing::error!("SAPI module pointer is NULL!");
                 return Err(anyhow::anyhow!(
                     "SAPI module pointer is null - PHP library may not be properly loaded"
                 ));
             }
+            tracing::info!("SAPI module pointer is valid: {:p}", self.sapi_module);
 
+            tracing::info!("Step 2: Configuring SAPI module...");
             let sapi = &mut *self.sapi_module;
 
             // Set SAPI name (using the boxed CStrings that live for PhpFfi's lifetime)
             sapi.name = self._sapi_name.as_ptr();
             sapi.pretty_name = self._sapi_pretty_name.as_ptr();
+            tracing::info!("SAPI name set: {:?}", CStr::from_ptr(sapi.name));
 
             // Set required callbacks
+            tracing::info!("Step 3: Setting SAPI callbacks...");
             sapi.activate = Some(php_sapi_activate);
             sapi.deactivate = Some(php_sapi_deactivate);
             sapi.ub_write = Some(php_output_handler);
@@ -335,8 +343,10 @@ impl PhpFfi {
             sapi.read_post = Some(php_read_post);
             sapi.read_cookies = Some(php_read_cookies);
             sapi.log_message = Some(php_log_message);
+            tracing::info!("SAPI callbacks set successfully");
 
             // Set additional fields to safe defaults
+            tracing::info!("Step 4: Setting SAPI defaults...");
             sapi.php_ini_path_override = ptr::null_mut();
             sapi.executable_location = ptr::null_mut();
             sapi.php_ini_ignore = 0;
@@ -344,22 +354,26 @@ impl PhpFfi {
             sapi.phpinfo_as_text = 0;
             sapi.ini_entries = ptr::null_mut();
             sapi.additional_functions = ptr::null();
-
-            tracing::debug!("SAPI module configured: name={:?}", CStr::from_ptr(sapi.name));
+            tracing::info!("SAPI defaults set successfully");
 
             // Call PHP module startup
-            tracing::debug!("Calling php_module_startup()...");
+            tracing::info!("Step 5: Calling php_module_startup()...");
+            tracing::info!("SAPI module address: {:p}", self.sapi_module);
+
             let result = (self.php_module_startup)(self.sapi_module, ptr::null_mut());
+
             if result != 0 {
+                tracing::error!("php_module_startup() failed with code: {}", result);
                 return Err(anyhow::anyhow!(
                     "php_module_startup failed with code {} - check PHP error log for details",
                     result
                 ));
             }
 
-            tracing::debug!("php_module_startup() completed successfully");
+            tracing::info!("php_module_startup() completed successfully with code: {}", result);
         }
 
+        tracing::info!("=== PHP Module Initialization Complete ===");
         Ok(())
     }
 
@@ -382,7 +396,10 @@ impl PhpFfi {
 
     /// Start a PHP request
     pub fn request_startup(&self) -> Result<()> {
+        tracing::info!("=== Starting PHP Request ===");
+
         // Clear output buffer (preserves capacity for reuse - buffer pooling)
+        tracing::debug!("Clearing output buffer...");
         OUTPUT_BUFFER.with(|buf| {
             if let Ok(mut buffer) = buf.lock() {
                 buffer.clear(); // Keeps allocated memory for next request
@@ -395,63 +412,87 @@ impl PhpFfi {
                 tracing::warn!("Failed to acquire output buffer lock in request_startup");
             }
         });
+        tracing::debug!("Output buffer cleared");
 
         unsafe {
+            tracing::info!("Calling php_request_startup()...");
             let result = (self.php_request_startup)();
             if result != 0 {
-                tracing::error!("php_request_startup failed with code {}", result);
+                tracing::error!("php_request_startup() failed with code: {}", result);
                 return Err(anyhow::anyhow!(
                     "php_request_startup failed with code {} - PHP may not be properly initialized",
                     result
                 ));
             }
+            tracing::info!("php_request_startup() completed successfully");
         }
+
+        tracing::info!("=== PHP Request Started ===");
         Ok(())
     }
 
     /// Shutdown a PHP request
     pub fn request_shutdown(&self) {
+        tracing::info!("=== Shutting down PHP Request ===");
         unsafe {
+            tracing::debug!("Calling php_request_shutdown()...");
             (self.php_request_shutdown)(ptr::null_mut());
+            tracing::debug!("php_request_shutdown() completed");
         }
+        tracing::info!("=== PHP Request Shutdown Complete ===");
     }
 
     /// Execute a PHP script using embedded libphp
     pub fn execute_script(&self, script_path: &str) -> Result<Vec<u8>> {
+        tracing::info!("=== Executing PHP Script: {} ===", script_path);
+
         // Verify file exists
+        tracing::debug!("Step 1: Verifying script exists...");
         let path = Path::new(script_path);
         if !path.exists() {
+            tracing::error!("Script not found: {}", script_path);
             return Err(anyhow::anyhow!("PHP script not found: {}", script_path));
         }
+        tracing::debug!("Script exists: {}", script_path);
 
         // Verify file is readable
+        tracing::debug!("Step 2: Verifying script is readable...");
         if let Err(e) = std::fs::metadata(path) {
+            tracing::error!("Cannot access script {}: {}", script_path, e);
             return Err(anyhow::anyhow!(
                 "Cannot access PHP script {}: {}",
                 script_path,
                 e
             ));
         }
+        tracing::debug!("Script is readable");
 
         unsafe {
             // Create CString for the script path (must live for the duration of the call)
+            tracing::debug!("Step 3: Creating CString for script path...");
             let path_cstr = CString::new(script_path)
                 .with_context(|| format!("Invalid script path (contains null byte): {}", script_path))?;
+            tracing::debug!("CString created successfully");
 
             // Create zend_file_handle structure (PHP 8.1+)
-            // Initialize with zeros first
+            tracing::debug!("Step 4: Initializing zend_file_handle...");
             let mut file_handle: ZendFileHandle = std::mem::zeroed();
+            tracing::debug!("zend_file_handle zeroed");
 
             // Initialize file handle using zend_stream_init_filename (PHP 8.1+)
-            // This function properly sets up all fields including the union
+            tracing::debug!("Step 5: Calling zend_stream_init_filename()...");
             (self.zend_stream_init_filename)(&mut file_handle, path_cstr.as_ptr());
+            tracing::debug!("zend_stream_init_filename() completed");
 
             // Execute the script
-            tracing::trace!("Executing PHP script: {}", script_path);
+            tracing::info!("Step 6: Calling php_execute_script()...");
             let result = (self.php_execute_script)(&mut file_handle);
+            tracing::info!("php_execute_script() returned: {}", result);
 
             // Clean up file handle (important to avoid memory leaks)
+            tracing::debug!("Step 7: Cleaning up file handle...");
             (self.zend_destroy_file_handle)(&mut file_handle);
+            tracing::debug!("File handle destroyed");
 
             if result != 0 {
                 // Get output even on error (might contain error messages)
@@ -484,7 +525,7 @@ impl PhpFfi {
             buf.lock().ok().map(|b| b.clone()).unwrap_or_default()
         });
 
-        tracing::trace!("PHP script executed successfully, output size: {} bytes", output.len());
+        tracing::info!("=== PHP Script Execution Complete ({} bytes output) ===", output.len());
 
         Ok(output)
     }
