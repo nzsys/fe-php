@@ -211,8 +211,7 @@ pub struct PhpFfi {
     zend_stream_open: Symbol<'static, unsafe extern "C" fn(*mut ZendFileHandle) -> c_int>,
     zend_destroy_file_handle: Symbol<'static, unsafe extern "C" fn(*mut ZendFileHandle)>,
     php_output_activate: Symbol<'static, unsafe extern "C" fn() -> c_int>,
-    php_output_flush_all: Symbol<'static, unsafe extern "C" fn()>,
-    php_output_start_default: Symbol<'static, unsafe extern "C" fn() -> c_int>,
+    php_output_set_implicit_flush: Symbol<'static, unsafe extern "C" fn(c_int)>,
     php_output_get_contents: Symbol<'static, unsafe extern "C" fn(*mut *mut c_char, *mut c_uint) -> c_int>,
     php_output_discard_all: Symbol<'static, unsafe extern "C" fn() -> c_int>,
     sapi_module: *mut SapiModule,
@@ -338,19 +337,11 @@ impl PhpFfi {
             std::mem::transmute(symbol)
         };
 
-        // Load php_output_flush_all (to flush output buffers)
-        let php_output_flush_all = unsafe {
-            let symbol: Symbol<unsafe extern "C" fn()> =
-                library.get(b"php_output_flush_all\0")
-                    .context("Failed to load php_output_flush_all")?;
-            std::mem::transmute(symbol)
-        };
-
-        // Load php_output_start_default (to start output buffering)
-        let php_output_start_default = unsafe {
-            let symbol: Symbol<unsafe extern "C" fn() -> c_int> =
-                library.get(b"php_output_start_default\0")
-                    .context("Failed to load php_output_start_default")?;
+        // Load php_output_set_implicit_flush (to enable direct output to ub_write)
+        let php_output_set_implicit_flush = unsafe {
+            let symbol: Symbol<unsafe extern "C" fn(c_int)> =
+                library.get(b"php_output_set_implicit_flush\0")
+                    .context("Failed to load php_output_set_implicit_flush")?;
             std::mem::transmute(symbol)
         };
 
@@ -394,8 +385,7 @@ impl PhpFfi {
             zend_stream_open,
             zend_destroy_file_handle,
             php_output_activate,
-            php_output_flush_all,
-            php_output_start_default,
+            php_output_set_implicit_flush,
             php_output_get_contents,
             php_output_discard_all,
             sapi_module,
@@ -557,20 +547,16 @@ impl PhpFfi {
 
             // Re-set ub_write after sapi_activate (it may reset callbacks)
             let sapi = &mut *self.sapi_module;
-            tracing::info!("Re-setting ub_write after request_startup...");
+            tracing::info!("Re-setting ub_write after sapi_activate...");
             tracing::info!("  - ub_write before: {:?}", sapi.ub_write);
             tracing::info!("  - php_output_handler address: {:p}", php_output_handler as *const ());
             sapi.ub_write = Some(php_output_handler);
             tracing::info!("  - ub_write after: {:?}", sapi.ub_write);
 
-            // Start PHP output buffering explicitly
-            tracing::info!("Starting PHP output buffering...");
-            let ob_result = (self.php_output_start_default)();
-            if ob_result != 0 {
-                tracing::warn!("php_output_start_default returned: {}", ob_result);
-            } else {
-                tracing::info!("PHP output buffering started successfully");
-            }
+            // Enable implicit flush to send output directly to ub_write (FrankenPHP approach)
+            tracing::info!("Enabling implicit flush...");
+            (self.php_output_set_implicit_flush)(1);
+            tracing::info!("Implicit flush enabled - output will go directly to ub_write");
         }
 
         tracing::info!("=== PHP Request Started ===");
@@ -693,36 +679,9 @@ impl PhpFfi {
                 ));
             }
 
-            // Get PHP output buffer contents directly instead of relying on ub_write
-            tracing::info!("Getting PHP output buffer contents directly...");
-            let mut output_ptr: *mut c_char = std::ptr::null_mut();
-            let mut output_len: c_uint = 0;
-
-            let ob_result = (self.php_output_get_contents)(&mut output_ptr, &mut output_len);
-            tracing::info!("  - php_output_get_contents returned: {}, len: {}", ob_result, output_len);
-
-            let php_output = if ob_result == 0 && !output_ptr.is_null() && output_len > 0 {
-                let data = std::slice::from_raw_parts(output_ptr as *const u8, output_len as usize);
-                tracing::info!("  - Successfully retrieved {} bytes from OB", data.len());
-                data.to_vec()
-            } else {
-                tracing::warn!("  - Failed to get OB contents or empty");
-                Vec::new()
-            };
-
-            // Discard the output buffer
-            tracing::info!("Discarding PHP output buffers...");
-            (self.php_output_discard_all)();
-            tracing::info!("PHP output buffers discarded");
-
-            // Store in our buffer for consistency
-            if !php_output.is_empty() {
-                OUTPUT_BUFFER.with(|buf| {
-                    if let Ok(mut buffer) = buf.lock() {
-                        buffer.extend_from_slice(&php_output);
-                    }
-                });
-            }
+            // With implicit flush enabled, output should have been sent to ub_write
+            // and captured in OUTPUT_BUFFER during script execution
+            tracing::info!("Script execution complete, output should be in buffer");
         }
 
         // Get captured output
