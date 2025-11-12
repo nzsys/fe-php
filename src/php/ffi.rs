@@ -209,6 +209,7 @@ pub struct PhpFfi {
     zend_stream_init_filename: Symbol<'static, unsafe extern "C" fn(*mut ZendFileHandle, *const c_char)>,
     zend_stream_open: Symbol<'static, unsafe extern "C" fn(*mut ZendFileHandle) -> c_int>,
     zend_destroy_file_handle: Symbol<'static, unsafe extern "C" fn(*mut ZendFileHandle)>,
+    php_output_flush_all: Symbol<'static, unsafe extern "C" fn()>,
     sapi_module: *mut SapiModule,
     // Keep CStrings alive for the lifetime of PhpFfi
     _sapi_name: Box<CString>,
@@ -317,6 +318,14 @@ impl PhpFfi {
             std::mem::transmute(symbol)
         };
 
+        // Load php_output_flush_all (to flush output buffers)
+        let php_output_flush_all = unsafe {
+            let symbol: Symbol<unsafe extern "C" fn()> =
+                library.get(b"php_output_flush_all\0")
+                    .context("Failed to load php_output_flush_all")?;
+            std::mem::transmute(symbol)
+        };
+
         // Get SAPI module pointer
         let sapi_module: *mut SapiModule = unsafe {
             let symbol: Symbol<*mut SapiModule> = library.get(b"sapi_module\0")
@@ -339,6 +348,7 @@ impl PhpFfi {
             zend_stream_init_filename,
             zend_stream_open,
             zend_destroy_file_handle,
+            php_output_flush_all,
             sapi_module,
             _sapi_name: sapi_name,
             _sapi_pretty_name: sapi_pretty_name,
@@ -598,6 +608,11 @@ impl PhpFfi {
                     script_path
                 ));
             }
+
+            // Flush PHP output buffers to trigger ub_write callback
+            tracing::debug!("Flushing PHP output buffers...");
+            (self.php_output_flush_all)();
+            tracing::debug!("PHP output buffers flushed");
         }
 
         // Get captured output
