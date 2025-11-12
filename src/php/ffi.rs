@@ -214,6 +214,9 @@ pub struct PhpFfi {
     #[allow(dead_code)]
     php_output_activate: Symbol<'static, unsafe extern "C" fn() -> c_int>,
     php_output_set_implicit_flush: Symbol<'static, unsafe extern "C" fn(c_int)>,
+    php_output_get_level: Symbol<'static, unsafe extern "C" fn() -> c_int>,
+    php_output_get_contents: Symbol<'static, unsafe extern "C" fn(*mut c_void) -> c_int>,
+    zval_ptr_dtor: Symbol<'static, unsafe extern "C" fn(*mut c_void)>,
     sapi_module: *mut SapiModule,
     // Keep CStrings alive for the lifetime of PhpFfi
     _sapi_name: Box<CString>,
@@ -345,6 +348,30 @@ impl PhpFfi {
             std::mem::transmute(symbol)
         };
 
+        // Load php_output_get_level (to check output buffer nesting level)
+        let php_output_get_level = unsafe {
+            let symbol: Symbol<unsafe extern "C" fn() -> c_int> =
+                library.get(b"php_output_get_level\0")
+                    .context("Failed to load php_output_get_level")?;
+            std::mem::transmute(symbol)
+        };
+
+        // Load php_output_get_contents (to retrieve buffered output)
+        let php_output_get_contents = unsafe {
+            let symbol: Symbol<unsafe extern "C" fn(*mut c_void) -> c_int> =
+                library.get(b"php_output_get_contents\0")
+                    .context("Failed to load php_output_get_contents")?;
+            std::mem::transmute(symbol)
+        };
+
+        // Load zval_ptr_dtor (to clean up zval)
+        let zval_ptr_dtor = unsafe {
+            let symbol: Symbol<unsafe extern "C" fn(*mut c_void)> =
+                library.get(b"zval_ptr_dtor\0")
+                    .context("Failed to load zval_ptr_dtor")?;
+            std::mem::transmute(symbol)
+        };
+
         // Get SAPI module pointer
         let sapi_module: *mut SapiModule = unsafe {
             let symbol: Symbol<*mut SapiModule> = library.get(b"sapi_module\0")
@@ -370,6 +397,9 @@ impl PhpFfi {
             zend_destroy_file_handle,
             php_output_activate,
             php_output_set_implicit_flush,
+            php_output_get_level,
+            php_output_get_contents,
+            zval_ptr_dtor,
             sapi_module,
             _sapi_name: sapi_name,
             _sapi_pretty_name: sapi_pretty_name,
@@ -634,7 +664,83 @@ impl PhpFfi {
 
             // With implicit flush enabled, output should have been sent to ub_write
             // and captured in OUTPUT_BUFFER during script execution
-            tracing::info!("Script execution complete, output should be in buffer");
+            tracing::info!("Script execution complete, checking output buffer...");
+
+            // Check if there's buffered output that wasn't flushed to ub_write
+            let buffer_level = (self.php_output_get_level)();
+            tracing::info!("PHP output buffer level: {}", buffer_level);
+
+            if buffer_level > 0 {
+                tracing::info!("Output is buffered (level {}), retrieving contents...", buffer_level);
+
+                // Create a zval to receive the output contents
+                // zval is a union type in PHP, we'll treat it as opaque bytes
+                let mut zval: [u8; 16] = [0; 16]; // zval is typically 16 bytes on 64-bit systems
+
+                // Get the buffered output contents
+                let result = (self.php_output_get_contents)(zval.as_mut_ptr() as *mut c_void);
+
+                if result == 0 {  // SUCCESS in PHP
+                    tracing::info!("Successfully retrieved buffered output from PHP");
+
+                    // The zval now contains a string with the output
+                    // We need to extract the string data from the zval
+                    // In PHP's zval structure, a string zval contains:
+                    // - type info (1 byte)
+                    // - type flags (1 byte)
+                    // - u2 (4 bytes padding/additional data)
+                    // - zend_string* pointer (8 bytes on 64-bit)
+
+                    // Extract the zend_string pointer (last 8 bytes of zval)
+                    let ptr_bytes = &zval[8..16];
+                    let mut ptr_array = [0u8; 8];
+                    ptr_array.copy_from_slice(ptr_bytes);
+                    let zend_string_ptr = usize::from_ne_bytes(ptr_array) as *const u8;
+
+                    if !zend_string_ptr.is_null() {
+                        // zend_string structure:
+                        // - refcount (4 bytes)
+                        // - flags (4 bytes)
+                        // - h (hash, 8 bytes)
+                        // - len (8 bytes)
+                        // - val (actual string data follows)
+
+                        // Read the string length (at offset 16 bytes into zend_string)
+                        let len_ptr = zend_string_ptr.add(16) as *const usize;
+                        let str_len = *len_ptr;
+
+                        tracing::info!("Buffered output string length: {} bytes", str_len);
+
+                        if str_len > 0 && str_len < 10 * 1024 * 1024 {  // Sanity check: < 10MB
+                            // Read the actual string data (starts at offset 24 bytes into zend_string)
+                            let str_ptr = zend_string_ptr.add(24);
+                            let output_slice = std::slice::from_raw_parts(str_ptr, str_len);
+
+                            tracing::info!("Captured {} bytes from PHP output buffer: {:?}",
+                                str_len, String::from_utf8_lossy(output_slice));
+
+                            // Add to our output buffer
+                            OUTPUT_BUFFER.with(|buf| {
+                                if let Ok(mut buffer) = buf.lock() {
+                                    buffer.extend_from_slice(output_slice);
+                                    tracing::info!("Added buffered output to OUTPUT_BUFFER ({} bytes total)", buffer.len());
+                                }
+                            });
+                        } else {
+                            tracing::warn!("String length {} is invalid or too large", str_len);
+                        }
+                    } else {
+                        tracing::warn!("zend_string pointer is null");
+                    }
+
+                    // Clean up the zval
+                    (self.zval_ptr_dtor)(zval.as_mut_ptr() as *mut c_void);
+                } else {
+                    tracing::warn!("php_output_get_contents failed with code: {}", result);
+                }
+            } else {
+                tracing::info!("No output buffering active, output should have gone to ub_write");
+            }
         }
 
         // Get captured output
