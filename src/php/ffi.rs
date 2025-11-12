@@ -528,31 +528,26 @@ impl PhpFfi {
             let mut file_handle: ZendFileHandle = std::mem::zeroed();
             tracing::info!("  - zend_file_handle zeroed");
 
-            // Initialize file handle using zend_stream_init_filename (PHP 8.1+)
-            tracing::info!("Step 5: Calling zend_stream_init_filename()...");
-            (self.zend_stream_init_filename)(&mut file_handle, path_cstr.as_ptr());
-            tracing::info!("  - zend_stream_init_filename() completed");
-
-            // CRITICAL: Open the file handle FIRST (PHP 8.1+ requirement)
-            // zend_stream_init_filename() only initializes the structure.
-            // We must call zend_stream_open() to actually open the file.
-            tracing::info!("Step 5.5: Calling zend_stream_open()...");
-            let open_result = (self.zend_stream_open)(&mut file_handle);
-            if open_result != 0 {
-                tracing::error!("zend_stream_open() failed with code: {}", open_result);
-                return Err(anyhow::anyhow!(
-                    "Failed to open PHP script {}: zend_stream_open returned {}",
-                    script_path,
-                    open_result
-                ));
+            // Try alternative approach: Use fopen() and directly set handle.fp
+            // This is more compatible with older PHP code patterns
+            tracing::info!("Step 5: Opening file with fopen()...");
+            let mode_cstr = CString::new("rb").unwrap();
+            let fp = libc::fopen(path_cstr.as_ptr(), mode_cstr.as_ptr());
+            if fp.is_null() {
+                tracing::error!("fopen() failed for: {}", script_path);
+                return Err(anyhow::anyhow!("Failed to open PHP script: {}", script_path));
             }
-            tracing::info!("  - zend_stream_open() succeeded");
+            tracing::info!("  - fopen() succeeded, fp: {:p}", fp);
 
-            // CRITICAL: Set primary_script flag AFTER zend_stream_open()
-            // zend_stream_open() resets this flag to false, so we must set it after opening.
-            tracing::info!("Step 5.6: Setting primary_script flag (AFTER zend_stream_open)...");
+            // Set file handle fields manually
+            file_handle.handle.fp = fp;
+            file_handle.filename = std::ptr::null_mut(); // Will be set by PHP if needed
+            file_handle.opened_path = std::ptr::null_mut();
+            file_handle.handle_type = 1; // ZendStreamType::Fp
             file_handle.primary_script = true;
-            tracing::info!("  - primary_script flag set to: {}", file_handle.primary_script);
+            tracing::info!("  - File handle configured with fp stream");
+            tracing::info!("  - handle_type: 1 (Fp)");
+            tracing::info!("  - primary_script: true");
 
             // Execute the script
             tracing::info!("Step 6: Calling php_execute_script()...");
