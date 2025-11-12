@@ -201,6 +201,7 @@ pub struct PhpFfi {
     library: Library,
     // Function pointers
     sapi_startup: Symbol<'static, unsafe extern "C" fn(*mut SapiModule) -> c_int>,
+    #[allow(dead_code)]
     sapi_activate: Symbol<'static, unsafe extern "C" fn() -> c_int>,
     php_module_startup: Symbol<'static, unsafe extern "C" fn(*mut SapiModule, *mut c_void) -> c_int>,
     php_module_shutdown: Symbol<'static, unsafe extern "C" fn() -> c_int>,
@@ -210,6 +211,7 @@ pub struct PhpFfi {
     zend_stream_init_filename: Symbol<'static, unsafe extern "C" fn(*mut ZendFileHandle, *const c_char)>,
     zend_stream_open: Symbol<'static, unsafe extern "C" fn(*mut ZendFileHandle) -> c_int>,
     zend_destroy_file_handle: Symbol<'static, unsafe extern "C" fn(*mut ZendFileHandle)>,
+    #[allow(dead_code)]
     php_output_activate: Symbol<'static, unsafe extern "C" fn() -> c_int>,
     php_output_set_implicit_flush: Symbol<'static, unsafe extern "C" fn(c_int)>,
     sapi_module: *mut SapiModule,
@@ -496,6 +498,10 @@ impl PhpFfi {
         tracing::debug!("Output buffer cleared");
 
         unsafe {
+            // php_request_startup() internally calls:
+            // - php_output_activate() to initialize output buffering
+            // - sapi_activate() to activate the SAPI layer
+            // So we don't need to call them separately
             tracing::info!("Calling php_request_startup()...");
             let result = (self.php_request_startup)();
             if result != 0 {
@@ -507,33 +513,13 @@ impl PhpFfi {
             }
             tracing::info!("php_request_startup() completed successfully");
 
-            // Activate PHP output buffering layer (FrankenPHP does this)
-            tracing::info!("Activating PHP output layer...");
-            let activate_result = (self.php_output_activate)();
-            if activate_result != 0 {
-                tracing::warn!("php_output_activate returned: {}", activate_result);
-            } else {
-                tracing::info!("PHP output layer activated successfully");
-            }
-
-            // Activate SAPI layer (FrankenPHP calls this after php_output_activate)
-            tracing::info!("Calling sapi_activate()...");
-            let sapi_result = (self.sapi_activate)();
-            if sapi_result != 0 {
-                tracing::warn!("sapi_activate returned: {}", sapi_result);
-            } else {
-                tracing::info!("sapi_activate() completed successfully");
-            }
-
-            // Re-set ub_write after sapi_activate (it may reset callbacks)
+            // Verify ub_write is still set (it should persist from module_startup)
             let sapi = &mut *self.sapi_module;
-            tracing::info!("Re-setting ub_write after sapi_activate...");
-            tracing::info!("  - ub_write before: {:?}", sapi.ub_write);
-            tracing::info!("  - php_output_handler address: {:p}", php_output_handler as *const ());
-            sapi.ub_write = Some(php_output_handler);
-            tracing::info!("  - ub_write after: {:?}", sapi.ub_write);
+            tracing::info!("Verifying ub_write callback: {:?}", sapi.ub_write);
+            tracing::info!("php_output_handler address: {:p}", php_output_handler as *const ());
 
-            // Enable implicit flush to send output directly to ub_write (FrankenPHP approach)
+            // Enable implicit flush to send output directly to ub_write
+            // This tells PHP to bypass internal buffering and send output immediately
             tracing::info!("Enabling implicit flush...");
             (self.php_output_set_implicit_flush)(1);
             tracing::info!("Implicit flush enabled - output will go directly to ub_write");
@@ -547,11 +533,6 @@ impl PhpFfi {
     pub fn request_shutdown(&self) {
         tracing::info!("=== Shutting down PHP Request ===");
         unsafe {
-            // Ensure ub_write is still set before shutdown (PHP may flush buffers during shutdown)
-            let sapi = &mut *self.sapi_module;
-            tracing::debug!("ub_write before shutdown: {:?}", sapi.ub_write);
-            sapi.ub_write = Some(php_output_handler);
-
             tracing::debug!("Calling php_request_shutdown()...");
             (self.php_request_shutdown)(ptr::null_mut());
             tracing::debug!("php_request_shutdown() completed");
@@ -613,14 +594,6 @@ impl PhpFfi {
             // Set primary_script AFTER zend_stream_open (it may reset the flag)
             file_handle.primary_script = true;
             tracing::info!("  - primary_script set to true");
-
-            // Re-verify and force-set SAPI ub_write callback before execution
-            // (PHP may have reset it during request_startup or stream_open)
-            tracing::info!("Step 7: Re-verifying SAPI callbacks before execution...");
-            let sapi = &mut *self.sapi_module;
-            tracing::info!("  - Current ub_write: {:?}", sapi.ub_write);
-            sapi.ub_write = Some(php_output_handler);
-            tracing::info!("  - Forced ub_write to php_output_handler");
 
             // Execute the script
             tracing::info!("Step 8: Calling php_execute_script()...");
