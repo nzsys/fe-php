@@ -215,26 +215,24 @@ impl PhpFfi {
             // Use platform-specific loading flags for better compatibility
             #[cfg(unix)]
             {
-                // For single-worker mode (workers=1), PHP needs RTLD_GLOBAL
-                // PHP's internal extensions and opcache require symbols in global namespace
+                // Use RTLD_LOCAL to prevent symbol conflicts with other libraries
+                // RTLD_GLOBAL was causing segfaults due to symbol collisions
                 //
                 // RTLD_NOW (2): Resolve all symbols immediately (catch errors early)
-                // RTLD_GLOBAL (0x100): Make symbols available globally (required for PHP execution)
+                // RTLD_LOCAL (0): Keep symbols local to this library (prevents conflicts)
                 //
-                // Note: RTLD_GLOBAL is safe for single-worker mode since there's no
-                // symbol conflict between workers. For multi-worker, would need RTLD_LOCAL
-                // but that prevents PHP from executing scripts properly.
+                // This matches the typical PHP embed SAPI behavior which uses RTLD_LOCAL
                 const RTLD_NOW: flag_type = 2;
-                const RTLD_GLOBAL: flag_type = 0x100;
+                const RTLD_LOCAL: flag_type = 0;
 
                 tracing::info!(
-                    "Loading libphp from {:?} with RTLD_NOW | RTLD_GLOBAL flags",
+                    "Loading libphp from {:?} with RTLD_NOW | RTLD_LOCAL flags",
                     library_path.as_ref()
                 );
 
                 let unix_lib = UnixLibrary::open(
                     Some(library_path.as_ref()),
-                    RTLD_NOW | RTLD_GLOBAL
+                    RTLD_NOW | RTLD_LOCAL
                 ).with_context(|| format!("Failed to load libphp from {:?}", library_path.as_ref()))?;
 
                 Library::from(unix_lib)
@@ -540,7 +538,7 @@ impl PhpFfi {
             tracing::info!("  - fopen() succeeded, fp: {:p}", fp);
 
             // Set file handle fields manually
-            file_handle.handle.fp = fp;
+            file_handle.handle.fp = fp as *mut c_void; // Cast FILE* to void*
             file_handle.filename = std::ptr::null_mut(); // Will be set by PHP if needed
             file_handle.opened_path = std::ptr::null_mut();
             file_handle.handle_type = 1; // ZendStreamType::Fp
