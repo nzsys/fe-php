@@ -553,7 +553,8 @@ impl PhpFfi {
             (self.zend_destroy_file_handle)(&mut file_handle);
             tracing::debug!("File handle destroyed");
 
-            if result != 0 {
+            // In PHP's embed API: 1 (SUCCESS) = success, 0 (FAILURE) = failure
+            if result == 0 {
                 // Get output even on error (might contain error messages)
                 let output = OUTPUT_BUFFER.with(|buf| {
                     buf.lock().ok().map(|b| b.clone()).unwrap_or_default()
