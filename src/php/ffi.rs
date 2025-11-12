@@ -201,6 +201,7 @@ pub struct PhpFfi {
     library: Library,
     // Function pointers
     sapi_startup: Symbol<'static, unsafe extern "C" fn(*mut SapiModule) -> c_int>,
+    sapi_activate: Symbol<'static, unsafe extern "C" fn() -> c_int>,
     php_module_startup: Symbol<'static, unsafe extern "C" fn(*mut SapiModule, *mut c_void) -> c_int>,
     php_module_shutdown: Symbol<'static, unsafe extern "C" fn() -> c_int>,
     php_request_startup: Symbol<'static, unsafe extern "C" fn() -> c_int>,
@@ -260,6 +261,13 @@ impl PhpFfi {
             let symbol: Symbol<unsafe extern "C" fn(*mut SapiModule) -> c_int> =
                 library.get(b"sapi_startup\0")
                     .context("Failed to load sapi_startup")?;
+            std::mem::transmute(symbol)
+        };
+
+        let sapi_activate = unsafe {
+            let symbol: Symbol<unsafe extern "C" fn() -> c_int> =
+                library.get(b"sapi_activate\0")
+                    .context("Failed to load sapi_activate")?;
             std::mem::transmute(symbol)
         };
 
@@ -376,6 +384,7 @@ impl PhpFfi {
         Ok(Self {
             library,
             sapi_startup,
+            sapi_activate,
             php_module_startup,
             php_module_shutdown,
             php_request_startup,
@@ -537,7 +546,16 @@ impl PhpFfi {
                 tracing::info!("PHP output layer activated successfully");
             }
 
-            // Re-set ub_write after request_startup (PHP may reset it)
+            // Activate SAPI layer (FrankenPHP calls this after php_output_activate)
+            tracing::info!("Calling sapi_activate()...");
+            let sapi_result = (self.sapi_activate)();
+            if sapi_result != 0 {
+                tracing::warn!("sapi_activate returned: {}", sapi_result);
+            } else {
+                tracing::info!("sapi_activate() completed successfully");
+            }
+
+            // Re-set ub_write after sapi_activate (it may reset callbacks)
             let sapi = &mut *self.sapi_module;
             tracing::info!("Re-setting ub_write after request_startup...");
             tracing::info!("  - ub_write before: {:?}", sapi.ub_write);
