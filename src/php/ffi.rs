@@ -502,6 +502,7 @@ impl PhpFfi {
             let sapi = &mut *self.sapi_module;
             tracing::info!("Re-setting ub_write after request_startup...");
             tracing::info!("  - ub_write before: {:?}", sapi.ub_write);
+            tracing::info!("  - php_output_handler address: {:p}", php_output_handler as *const ());
             sapi.ub_write = Some(php_output_handler);
             tracing::info!("  - ub_write after: {:?}", sapi.ub_write);
 
