@@ -112,15 +112,20 @@ thread_local! {
 
 /// Callback for PHP output - captures to thread-local buffer
 extern "C" fn php_output_handler(output: *const c_char, output_len: c_uint) -> c_uint {
+    tracing::debug!("php_output_handler called: ptr={:?}, len={}", output, output_len);
+
     if output.is_null() || output_len == 0 {
+        tracing::debug!("php_output_handler: null or zero length, returning 0");
         return 0;
     }
 
     unsafe {
         let data = std::slice::from_raw_parts(output as *const u8, output_len as usize);
+        tracing::debug!("php_output_handler: captured {} bytes", data.len());
         OUTPUT_BUFFER.with(|buf| {
             if let Ok(mut buffer) = buf.lock() {
                 buffer.extend_from_slice(data);
+                tracing::debug!("php_output_handler: buffer now has {} bytes total", buffer.len());
             }
         });
     }
