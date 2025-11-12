@@ -72,7 +72,7 @@ pub struct SapiModule {
     pub shutdown: Option<extern "C" fn(*mut SapiModule) -> c_int>,
     pub activate: Option<extern "C" fn() -> c_int>,
     pub deactivate: Option<extern "C" fn() -> c_int>,
-    pub ub_write: Option<extern "C" fn(*const c_char, c_uint) -> c_uint>,
+    pub ub_write: Option<extern "C" fn(*const c_char, usize) -> usize>,
     pub flush: Option<extern "C" fn(*mut c_void)>,
     pub get_stat: Option<extern "C" fn() -> *mut c_void>,
     pub getenv: Option<extern "C" fn(*const c_char, c_uint) -> *mut c_char>,
@@ -111,7 +111,7 @@ thread_local! {
 }
 
 /// Callback for PHP output - captures to thread-local buffer
-extern "C" fn php_output_handler(output: *const c_char, output_len: c_uint) -> c_uint {
+extern "C" fn php_output_handler(output: *const c_char, output_len: usize) -> usize {
     tracing::info!("php_output_handler called: ptr={:?}, len={}", output, output_len);
 
     if output.is_null() || output_len == 0 {
@@ -120,7 +120,7 @@ extern "C" fn php_output_handler(output: *const c_char, output_len: c_uint) -> c
     }
 
     unsafe {
-        let data = std::slice::from_raw_parts(output as *const u8, output_len as usize);
+        let data = std::slice::from_raw_parts(output as *const u8, output_len);
         tracing::info!("php_output_handler: captured {} bytes", data.len());
         OUTPUT_BUFFER.with(|buf| {
             if let Ok(mut buffer) = buf.lock() {
@@ -212,8 +212,6 @@ pub struct PhpFfi {
     zend_destroy_file_handle: Symbol<'static, unsafe extern "C" fn(*mut ZendFileHandle)>,
     php_output_activate: Symbol<'static, unsafe extern "C" fn() -> c_int>,
     php_output_set_implicit_flush: Symbol<'static, unsafe extern "C" fn(c_int)>,
-    php_output_get_contents: Symbol<'static, unsafe extern "C" fn(*mut *mut c_char, *mut c_uint) -> c_int>,
-    php_output_discard_all: Symbol<'static, unsafe extern "C" fn() -> c_int>,
     sapi_module: *mut SapiModule,
     // Keep CStrings alive for the lifetime of PhpFfi
     _sapi_name: Box<CString>,
@@ -345,22 +343,6 @@ impl PhpFfi {
             std::mem::transmute(symbol)
         };
 
-        // Load php_output_get_contents (to get OB contents directly)
-        let php_output_get_contents = unsafe {
-            let symbol: Symbol<unsafe extern "C" fn(*mut *mut c_char, *mut c_uint) -> c_int> =
-                library.get(b"php_output_get_contents\0")
-                    .context("Failed to load php_output_get_contents")?;
-            std::mem::transmute(symbol)
-        };
-
-        // Load php_output_discard_all (to clean up OB)
-        let php_output_discard_all = unsafe {
-            let symbol: Symbol<unsafe extern "C" fn() -> c_int> =
-                library.get(b"php_output_discard_all\0")
-                    .context("Failed to load php_output_discard_all")?;
-            std::mem::transmute(symbol)
-        };
-
         // Get SAPI module pointer
         let sapi_module: *mut SapiModule = unsafe {
             let symbol: Symbol<*mut SapiModule> = library.get(b"sapi_module\0")
@@ -386,8 +368,6 @@ impl PhpFfi {
             zend_destroy_file_handle,
             php_output_activate,
             php_output_set_implicit_flush,
-            php_output_get_contents,
-            php_output_discard_all,
             sapi_module,
             _sapi_name: sapi_name,
             _sapi_pretty_name: sapi_pretty_name,
