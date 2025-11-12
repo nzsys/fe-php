@@ -26,15 +26,10 @@ impl WorkerPool {
         // Initialize PHP module ONCE globally (not in worker threads)
         // This prevents "zend_mm_heap corrupted" error when multiple workers
         // try to call php_module_startup() simultaneously
-        let (php_module, shared_ffi) = if !php_config.use_fpm {
-            info!("Initializing PHP module for {} worker(s)...", config.pool_size);
-            let module = PhpExecutor::new(php_config.clone())?;
-            let ffi = module.get_shared_ffi();
-            info!("PHP module initialized successfully");
-            (Some(module), ffi)
-        } else {
-            (None, None)  // PHP-FPM mode doesn't need global initialization
-        };
+        info!("Initializing PHP module for {} worker(s)...", config.pool_size);
+        let php_module = PhpExecutor::new(php_config.clone())?;
+        let shared_ffi = php_module.get_shared_ffi();
+        info!("PHP module initialized successfully");
 
         // Create a barrier to synchronize worker thread initialization
         // This ensures all workers are fully initialized before accepting requests
@@ -61,8 +56,8 @@ impl WorkerPool {
         Ok(Self {
             request_tx,
             config,
-            _php_module: php_module,  // Kept alive for process lifetime
-            shared_ffi,               // Kept alive and shared with all workers
+            _php_module: Some(php_module),  // Kept alive for process lifetime
+            shared_ffi,                     // Kept alive and shared with all workers
         })
     }
 

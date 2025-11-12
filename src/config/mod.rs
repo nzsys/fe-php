@@ -55,10 +55,6 @@ pub struct PhpConfig {
     pub worker_max_requests: usize,
     #[serde(default)]
     pub opcache: OpcacheConfig,
-    #[serde(default)]
-    pub use_fpm: bool,
-    #[serde(default = "default_fpm_socket")]
-    pub fpm_socket: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -204,9 +200,6 @@ fn default_allowed_ips() -> Vec<String> {
     vec!["127.0.0.1".to_string()]
 }
 
-fn default_fpm_socket() -> String {
-    "127.0.0.1:9000".to_string()
-}
 
 impl Default for OpcacheConfig {
     fn default() -> Self {

@@ -1,5 +1,4 @@
 use super::ffi::PhpFfi;
-use super::fastcgi::FastCgiClient;
 use super::PhpConfig;
 use anyhow::{Context, Result};
 use std::collections::HashMap;
@@ -28,9 +27,7 @@ pub struct PhpResponse {
 
 pub struct PhpExecutor {
     ffi: Option<Arc<PhpFfi>>,
-    fastcgi: Option<FastCgiClient>,
     document_root: PathBuf,
-    use_fpm: bool,
     skip_module_lifecycle: bool,  // Skip module_startup/shutdown (already done globally)
 }
 
@@ -38,22 +35,14 @@ impl PhpExecutor {
     /// Create executor with full PHP module initialization (call module_startup)
     /// This should be called once globally, and returns the shared PhpFfi instance
     pub fn new(config: PhpConfig) -> Result<Self> {
-        let (ffi, fastcgi) = if config.use_fpm {
-            // Use PHP-FPM via FastCGI
-            (None, Some(FastCgiClient::new(config.fpm_socket.clone())))
-        } else {
-            // Use libphp and initialize PHP module
-            let ffi = PhpFfi::load(&config.libphp_path)?;
-            ffi.module_startup()
-                .context("PHP module startup failed - check PHP installation and configuration")?;
-            (Some(Arc::new(ffi)), None)
-        };
+        // Use libphp and initialize PHP module
+        let ffi = PhpFfi::load(&config.libphp_path)?;
+        ffi.module_startup()
+            .context("PHP module startup failed - check PHP installation and configuration")?;
 
         Ok(Self {
-            ffi,
-            fastcgi,
+            ffi: Some(Arc::new(ffi)),
             document_root: config.document_root,
-            use_fpm: config.use_fpm,
             skip_module_lifecycle: false,
         })
     }
@@ -61,19 +50,9 @@ impl PhpExecutor {
     /// Create executor using shared PhpFfi instance (for worker threads)
     /// This avoids multiple library loads and module initialization
     pub fn new_worker(config: PhpConfig, shared_ffi: Option<Arc<PhpFfi>>) -> Result<Self> {
-        let (ffi, fastcgi) = if config.use_fpm {
-            // Use PHP-FPM via FastCGI
-            (None, Some(FastCgiClient::new(config.fpm_socket.clone())))
-        } else {
-            // Use shared PhpFfi instance (no need to load or initialize)
-            (shared_ffi, None)
-        };
-
         Ok(Self {
-            ffi,
-            fastcgi,
+            ffi: shared_ffi,
             document_root: config.document_root,
-            use_fpm: config.use_fpm,
             skip_module_lifecycle: true,
         })
     }
@@ -89,70 +68,38 @@ impl PhpExecutor {
         // Determine script path from URI
         let script_path = self.resolve_script_path(&request.uri)?;
 
-        if self.use_fpm {
-            // Execute via PHP-FPM
-            let fastcgi = self.fastcgi.as_ref().unwrap();
+        // Execute via embedded libphp
+        let ffi = self.ffi.as_ref()
+            .ok_or_else(|| anyhow::anyhow!("PHP FFI not initialized"))?;
 
-            // Use tokio's block_in_place to run async code in blocking context
-            let (stdout, stderr) = tokio::task::block_in_place(|| {
-                tokio::runtime::Handle::current().block_on(
-                    fastcgi.execute(
-                        script_path.to_str().unwrap(),
-                        &request.method,
-                        &request.uri,
-                        &request.query_string,
-                        &request.headers,
-                        &request.body,
-                        &request.remote_addr,
-                    )
-                )
-            })?;
+        // Start request
+        ffi.request_startup()
+            .context("Failed to start PHP request")?;
 
-            let execution_time_ms = start.elapsed().as_millis() as u64;
+        // Execute script
+        let output = match ffi.execute_script(script_path.to_str().unwrap()) {
+            Ok(out) => out,
+            Err(e) => {
+                ffi.request_shutdown();
+                return Err(e);
+            }
+        };
 
-            // Parse FastCGI response (HTTP headers + body)
-            let (status_code, headers, body) = self.parse_fastcgi_response(&stdout)?;
+        // Shutdown request
+        ffi.request_shutdown();
 
-            Ok(PhpResponse {
-                status_code,
-                headers,
-                body,
-                execution_time_ms,
-                memory_peak_mb: 0.0,
-            })
-        } else {
-            // Execute via embedded libphp (high performance mode)
-            let ffi = self.ffi.as_ref().unwrap();
+        let execution_time_ms = start.elapsed().as_millis() as u64;
 
-            // Start request
-            ffi.request_startup()
-                .context("Failed to start PHP request")?;
+        // Parse output for headers (PHP can output headers)
+        let (status_code, headers, body) = self.parse_php_output(&output)?;
 
-            // Execute script
-            let output = match ffi.execute_script(script_path.to_str().unwrap()) {
-                Ok(out) => out,
-                Err(e) => {
-                    ffi.request_shutdown();
-                    return Err(e);
-                }
-            };
-
-            // Shutdown request
-            ffi.request_shutdown();
-
-            let execution_time_ms = start.elapsed().as_millis() as u64;
-
-            // Parse output for headers (PHP can output headers)
-            let (status_code, headers, body) = self.parse_php_output(&output)?;
-
-            Ok(PhpResponse {
-                status_code,
-                headers,
-                body,
-                execution_time_ms,
-                memory_peak_mb: 0.0,
-            })
-        }
+        Ok(PhpResponse {
+            status_code,
+            headers,
+            body,
+            execution_time_ms,
+            memory_peak_mb: 0.0,
+        })
     }
 
     /// Parse PHP output (handles both raw output and headers)
@@ -228,11 +175,6 @@ impl PhpExecutor {
         };
 
         Ok((status_code, headers, body))
-    }
-
-    fn parse_fastcgi_response(&self, data: &[u8]) -> Result<(u16, HashMap<String, String>, Vec<u8>)> {
-        // Reuse the same parser for FastCGI responses
-        self.parse_headers_and_body(data)
     }
 
     fn resolve_script_path(&self, uri: &str) -> Result<PathBuf> {
