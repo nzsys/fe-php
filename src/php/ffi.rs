@@ -547,14 +547,22 @@ impl PhpFfi {
             file_handle.primary_script = true;
             tracing::info!("  - primary_script set to true");
 
+            // Re-verify and force-set SAPI ub_write callback before execution
+            // (PHP may have reset it during request_startup or stream_open)
+            tracing::info!("Step 7: Re-verifying SAPI callbacks before execution...");
+            let sapi = &mut *self.sapi_module;
+            tracing::info!("  - Current ub_write: {:?}", sapi.ub_write);
+            sapi.ub_write = Some(php_output_handler);
+            tracing::info!("  - Forced ub_write to php_output_handler");
+
             // Execute the script
-            tracing::info!("Step 7: Calling php_execute_script()...");
+            tracing::info!("Step 8: Calling php_execute_script()...");
             tracing::info!("  - About to call php_execute_script with file_handle at {:p}", &file_handle as *const _);
             let result = (self.php_execute_script)(&mut file_handle);
             tracing::info!("  - php_execute_script() returned: {}", result);
 
             // Clean up file handle (important to avoid memory leaks)
-            tracing::debug!("Step 8: Cleaning up file handle...");
+            tracing::debug!("Step 9: Cleaning up file handle...");
             (self.zend_destroy_file_handle)(&mut file_handle);
             tracing::debug!("File handle destroyed");
 
