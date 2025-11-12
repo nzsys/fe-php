@@ -487,6 +487,11 @@ impl PhpFfi {
     pub fn request_shutdown(&self) {
         tracing::info!("=== Shutting down PHP Request ===");
         unsafe {
+            // Ensure ub_write is still set before shutdown (PHP may flush buffers during shutdown)
+            let sapi = &mut *self.sapi_module;
+            tracing::debug!("ub_write before shutdown: {:?}", sapi.ub_write);
+            sapi.ub_write = Some(php_output_handler);
+
             tracing::debug!("Calling php_request_shutdown()...");
             (self.php_request_shutdown)(ptr::null_mut());
             tracing::debug!("php_request_shutdown() completed");
