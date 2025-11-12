@@ -177,7 +177,9 @@ extern "C" fn php_log_message(message: *const c_char, _syslog_type: c_int) {
 
 /// Stub callback for flushing output
 extern "C" fn php_flush(_server_context: *mut c_void) {
+    tracing::debug!("php_flush called - output should be flushed via ub_write");
     // Stub implementation - we buffer everything until request completes
+    // PHP should call ub_write to actually output the buffered data
 }
 
 /// Header handler callback
