@@ -508,6 +508,11 @@ impl PhpFfi {
             (self.zend_stream_init_filename)(&mut file_handle, path_cstr.as_ptr());
             tracing::debug!("zend_stream_init_filename() completed");
 
+            // CRITICAL: Mark as primary script (required for PHP to execute properly)
+            // Without this flag, php_execute_script() may segfault
+            file_handle.primary_script = true;
+            tracing::debug!("primary_script flag set to true");
+
             // Execute the script
             tracing::info!("Step 6: Calling php_execute_script()...");
             let result = (self.php_execute_script)(&mut file_handle);
