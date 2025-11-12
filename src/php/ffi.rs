@@ -215,24 +215,22 @@ impl PhpFfi {
             // Use platform-specific loading flags for better compatibility
             #[cfg(unix)]
             {
-                // Use RTLD_LOCAL to prevent symbol conflicts with other libraries
-                // RTLD_GLOBAL was causing segfaults due to symbol collisions
+                // Use RTLD_LAZY | RTLD_LOCAL to prevent symbol conflicts
+                // RTLD_NOW was still causing segfaults, trying lazy symbol resolution
                 //
-                // RTLD_NOW (2): Resolve all symbols immediately (catch errors early)
+                // RTLD_LAZY (1): Resolve symbols on demand (may prevent initialization issues)
                 // RTLD_LOCAL (0): Keep symbols local to this library (prevents conflicts)
-                //
-                // This matches the typical PHP embed SAPI behavior which uses RTLD_LOCAL
-                const RTLD_NOW: flag_type = 2;
+                const RTLD_LAZY: flag_type = 1;
                 const RTLD_LOCAL: flag_type = 0;
 
                 tracing::info!(
-                    "Loading libphp from {:?} with RTLD_NOW | RTLD_LOCAL flags",
+                    "Loading libphp from {:?} with RTLD_LAZY | RTLD_LOCAL flags",
                     library_path.as_ref()
                 );
 
                 let unix_lib = UnixLibrary::open(
                     Some(library_path.as_ref()),
-                    RTLD_NOW | RTLD_LOCAL
+                    RTLD_LAZY | RTLD_LOCAL
                 ).with_context(|| format!("Failed to load libphp from {:?}", library_path.as_ref()))?;
 
                 Library::from(unix_lib)
