@@ -211,6 +211,8 @@ pub struct PhpFfi {
     zend_destroy_file_handle: Symbol<'static, unsafe extern "C" fn(*mut ZendFileHandle)>,
     php_output_flush_all: Symbol<'static, unsafe extern "C" fn()>,
     php_output_start_default: Symbol<'static, unsafe extern "C" fn() -> c_int>,
+    php_output_get_contents: Symbol<'static, unsafe extern "C" fn(*mut *mut c_char, *mut c_uint) -> c_int>,
+    php_output_discard_all: Symbol<'static, unsafe extern "C" fn() -> c_int>,
     sapi_module: *mut SapiModule,
     // Keep CStrings alive for the lifetime of PhpFfi
     _sapi_name: Box<CString>,
@@ -335,6 +337,22 @@ impl PhpFfi {
             std::mem::transmute(symbol)
         };
 
+        // Load php_output_get_contents (to get OB contents directly)
+        let php_output_get_contents = unsafe {
+            let symbol: Symbol<unsafe extern "C" fn(*mut *mut c_char, *mut c_uint) -> c_int> =
+                library.get(b"php_output_get_contents\0")
+                    .context("Failed to load php_output_get_contents")?;
+            std::mem::transmute(symbol)
+        };
+
+        // Load php_output_discard_all (to clean up OB)
+        let php_output_discard_all = unsafe {
+            let symbol: Symbol<unsafe extern "C" fn() -> c_int> =
+                library.get(b"php_output_discard_all\0")
+                    .context("Failed to load php_output_discard_all")?;
+            std::mem::transmute(symbol)
+        };
+
         // Get SAPI module pointer
         let sapi_module: *mut SapiModule = unsafe {
             let symbol: Symbol<*mut SapiModule> = library.get(b"sapi_module\0")
@@ -359,6 +377,8 @@ impl PhpFfi {
             zend_destroy_file_handle,
             php_output_flush_all,
             php_output_start_default,
+            php_output_get_contents,
+            php_output_discard_all,
             sapi_module,
             _sapi_name: sapi_name,
             _sapi_pretty_name: sapi_pretty_name,
@@ -636,10 +656,36 @@ impl PhpFfi {
                 ));
             }
 
-            // Flush PHP output buffers to trigger ub_write callback
-            tracing::info!("Flushing PHP output buffers...");
-            (self.php_output_flush_all)();
-            tracing::info!("PHP output buffers flushed");
+            // Get PHP output buffer contents directly instead of relying on ub_write
+            tracing::info!("Getting PHP output buffer contents directly...");
+            let mut output_ptr: *mut c_char = std::ptr::null_mut();
+            let mut output_len: c_uint = 0;
+
+            let ob_result = (self.php_output_get_contents)(&mut output_ptr, &mut output_len);
+            tracing::info!("  - php_output_get_contents returned: {}, len: {}", ob_result, output_len);
+
+            let php_output = if ob_result == 0 && !output_ptr.is_null() && output_len > 0 {
+                let data = std::slice::from_raw_parts(output_ptr as *const u8, output_len as usize);
+                tracing::info!("  - Successfully retrieved {} bytes from OB", data.len());
+                data.to_vec()
+            } else {
+                tracing::warn!("  - Failed to get OB contents or empty");
+                Vec::new()
+            };
+
+            // Discard the output buffer
+            tracing::info!("Discarding PHP output buffers...");
+            (self.php_output_discard_all)();
+            tracing::info!("PHP output buffers discarded");
+
+            // Store in our buffer for consistency
+            if !php_output.is_empty() {
+                OUTPUT_BUFFER.with(|buf| {
+                    if let Ok(mut buffer) = buf.lock() {
+                        buffer.extend_from_slice(&php_output);
+                    }
+                });
+            }
         }
 
         // Get captured output
