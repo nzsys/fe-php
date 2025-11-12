@@ -210,6 +210,7 @@ pub struct PhpFfi {
     zend_stream_open: Symbol<'static, unsafe extern "C" fn(*mut ZendFileHandle) -> c_int>,
     zend_destroy_file_handle: Symbol<'static, unsafe extern "C" fn(*mut ZendFileHandle)>,
     php_output_flush_all: Symbol<'static, unsafe extern "C" fn()>,
+    php_output_start_default: Symbol<'static, unsafe extern "C" fn() -> c_int>,
     sapi_module: *mut SapiModule,
     // Keep CStrings alive for the lifetime of PhpFfi
     _sapi_name: Box<CString>,
@@ -326,6 +327,14 @@ impl PhpFfi {
             std::mem::transmute(symbol)
         };
 
+        // Load php_output_start_default (to start output buffering)
+        let php_output_start_default = unsafe {
+            let symbol: Symbol<unsafe extern "C" fn() -> c_int> =
+                library.get(b"php_output_start_default\0")
+                    .context("Failed to load php_output_start_default")?;
+            std::mem::transmute(symbol)
+        };
+
         // Get SAPI module pointer
         let sapi_module: *mut SapiModule = unsafe {
             let symbol: Symbol<*mut SapiModule> = library.get(b"sapi_module\0")
@@ -349,6 +358,7 @@ impl PhpFfi {
             zend_stream_open,
             zend_destroy_file_handle,
             php_output_flush_all,
+            php_output_start_default,
             sapi_module,
             _sapi_name: sapi_name,
             _sapi_pretty_name: sapi_pretty_name,
@@ -494,6 +504,15 @@ impl PhpFfi {
             tracing::info!("  - ub_write before: {:?}", sapi.ub_write);
             sapi.ub_write = Some(php_output_handler);
             tracing::info!("  - ub_write after: {:?}", sapi.ub_write);
+
+            // Start PHP output buffering explicitly
+            tracing::info!("Starting PHP output buffering...");
+            let ob_result = (self.php_output_start_default)();
+            if ob_result != 0 {
+                tracing::warn!("php_output_start_default returned: {}", ob_result);
+            } else {
+                tracing::info!("PHP output buffering started successfully");
+            }
         }
 
         tracing::info!("=== PHP Request Started ===");
