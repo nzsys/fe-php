@@ -209,6 +209,7 @@ pub struct PhpFfi {
     zend_stream_init_filename: Symbol<'static, unsafe extern "C" fn(*mut ZendFileHandle, *const c_char)>,
     zend_stream_open: Symbol<'static, unsafe extern "C" fn(*mut ZendFileHandle) -> c_int>,
     zend_destroy_file_handle: Symbol<'static, unsafe extern "C" fn(*mut ZendFileHandle)>,
+    php_output_activate: Symbol<'static, unsafe extern "C" fn() -> c_int>,
     php_output_flush_all: Symbol<'static, unsafe extern "C" fn()>,
     php_output_start_default: Symbol<'static, unsafe extern "C" fn() -> c_int>,
     php_output_get_contents: Symbol<'static, unsafe extern "C" fn(*mut *mut c_char, *mut c_uint) -> c_int>,
@@ -321,6 +322,14 @@ impl PhpFfi {
             std::mem::transmute(symbol)
         };
 
+        // Load php_output_activate (to initialize output buffering layer)
+        let php_output_activate = unsafe {
+            let symbol: Symbol<unsafe extern "C" fn() -> c_int> =
+                library.get(b"php_output_activate\0")
+                    .context("Failed to load php_output_activate")?;
+            std::mem::transmute(symbol)
+        };
+
         // Load php_output_flush_all (to flush output buffers)
         let php_output_flush_all = unsafe {
             let symbol: Symbol<unsafe extern "C" fn()> =
@@ -375,6 +384,7 @@ impl PhpFfi {
             zend_stream_init_filename,
             zend_stream_open,
             zend_destroy_file_handle,
+            php_output_activate,
             php_output_flush_all,
             php_output_start_default,
             php_output_get_contents,
@@ -517,6 +527,15 @@ impl PhpFfi {
                 ));
             }
             tracing::info!("php_request_startup() completed successfully");
+
+            // Activate PHP output buffering layer (FrankenPHP does this)
+            tracing::info!("Activating PHP output layer...");
+            let activate_result = (self.php_output_activate)();
+            if activate_result != 0 {
+                tracing::warn!("php_output_activate returned: {}", activate_result);
+            } else {
+                tracing::info!("PHP output layer activated successfully");
+            }
 
             // Re-set ub_write after request_startup (PHP may reset it)
             let sapi = &mut *self.sapi_module;
