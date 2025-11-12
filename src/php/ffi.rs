@@ -487,6 +487,13 @@ impl PhpFfi {
                 ));
             }
             tracing::info!("php_request_startup() completed successfully");
+
+            // Re-set ub_write after request_startup (PHP may reset it)
+            let sapi = &mut *self.sapi_module;
+            tracing::info!("Re-setting ub_write after request_startup...");
+            tracing::info!("  - ub_write before: {:?}", sapi.ub_write);
+            sapi.ub_write = Some(php_output_handler);
+            tracing::info!("  - ub_write after: {:?}", sapi.ub_write);
         }
 
         tracing::info!("=== PHP Request Started ===");
