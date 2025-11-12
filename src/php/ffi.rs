@@ -175,6 +175,19 @@ extern "C" fn php_flush(_server_context: *mut c_void) {
     // Stub implementation - we buffer everything until request completes
 }
 
+/// Header handler callback
+extern "C" fn php_header_handler(
+    _sapi_header: *mut c_void,
+    _sapi_header_struct: *mut c_void,
+) -> c_int {
+    0 // SAPI_HEADER_ADD
+}
+
+/// Send headers callback
+extern "C" fn php_send_headers(_sapi_headers_struct: *mut c_void) -> c_int {
+    200 // Return HTTP 200 OK
+}
+
 /// PHP FFI bindings
 pub struct PhpFfi {
     #[allow(dead_code)]
@@ -358,6 +371,8 @@ impl PhpFfi {
             sapi.deactivate = Some(php_sapi_deactivate);
             sapi.ub_write = Some(php_output_handler);
             sapi.flush = Some(php_flush);
+            sapi.header_handler = Some(php_header_handler);
+            sapi.send_headers = Some(php_send_headers);
             sapi.register_server_variables = Some(php_register_variables);
             sapi.read_post = Some(php_read_post);
             sapi.read_cookies = Some(php_read_cookies);
