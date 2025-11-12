@@ -499,24 +499,40 @@ impl PhpFfi {
             tracing::debug!("CString created successfully");
 
             // Create zend_file_handle structure (PHP 8.1+)
-            tracing::debug!("Step 4: Initializing zend_file_handle...");
+            tracing::info!("Step 4: Initializing zend_file_handle...");
             let mut file_handle: ZendFileHandle = std::mem::zeroed();
-            tracing::debug!("zend_file_handle zeroed");
+            tracing::info!("  - zend_file_handle zeroed");
 
             // Initialize file handle using zend_stream_init_filename (PHP 8.1+)
-            tracing::debug!("Step 5: Calling zend_stream_init_filename()...");
+            tracing::info!("Step 5: Calling zend_stream_init_filename()...");
             (self.zend_stream_init_filename)(&mut file_handle, path_cstr.as_ptr());
-            tracing::debug!("zend_stream_init_filename() completed");
+            tracing::info!("  - zend_stream_init_filename() completed");
+
+            // Log file_handle state BEFORE setting primary_script
+            tracing::info!("  - file_handle.handle_type = {}", file_handle.handle_type);
+            tracing::info!("  - file_handle.primary_script (before) = {}", file_handle.primary_script);
+            tracing::info!("  - file_handle.filename = {:p}", file_handle.filename);
+            tracing::info!("  - file_handle.opened_path = {:p}", file_handle.opened_path);
 
             // CRITICAL: Mark as primary script (required for PHP to execute properly)
             // Without this flag, php_execute_script() may segfault
+            tracing::info!("Step 5.5: Setting primary_script flag...");
             file_handle.primary_script = true;
-            tracing::debug!("primary_script flag set to true");
+            tracing::info!("  - primary_script flag set to: {}", file_handle.primary_script);
+
+            // Log complete file_handle state before execution
+            tracing::info!("Step 5.9: File handle state summary:");
+            tracing::info!("  - handle_type: {}", file_handle.handle_type);
+            tracing::info!("  - primary_script: {}", file_handle.primary_script);
+            tracing::info!("  - in_list: {}", file_handle.in_list);
+            tracing::info!("  - filename ptr: {:p}", file_handle.filename);
+            tracing::info!("  - opened_path ptr: {:p}", file_handle.opened_path);
 
             // Execute the script
             tracing::info!("Step 6: Calling php_execute_script()...");
+            tracing::info!("  - About to call php_execute_script with file_handle at {:p}", &file_handle as *const _);
             let result = (self.php_execute_script)(&mut file_handle);
-            tracing::info!("php_execute_script() returned: {}", result);
+            tracing::info!("  - php_execute_script() returned: {}", result);
 
             // Clean up file handle (important to avoid memory leaks)
             tracing::debug!("Step 7: Cleaning up file handle...");
