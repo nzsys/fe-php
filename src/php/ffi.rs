@@ -454,24 +454,13 @@ impl PhpFfi {
             sapi.additional_functions = ptr::null();
             tracing::info!("SAPI defaults set successfully");
 
-            // Call sapi_startup first (required for embedded SAPI)
-            tracing::info!("Step 5: Calling sapi_startup()...");
-            tracing::info!("SAPI module address: {:p}", self.sapi_module);
-
-            let result = (self.sapi_startup)(self.sapi_module);
-
-            if result != 0 {
-                tracing::error!("sapi_startup() failed with code: {}", result);
-                return Err(anyhow::anyhow!(
-                    "sapi_startup failed with code {} - SAPI initialization failed",
-                    result
-                ));
-            }
-
-            tracing::info!("sapi_startup() completed successfully with code: {}", result);
+            // NOTE: Do NOT call sapi_startup() for embedded SAPI
+            // It resets the SAPI structure and clears our callbacks (especially ub_write)
+            // The initial working version didn't call sapi_startup() and worked correctly
+            // php_module_startup() handles all necessary initialization
 
             // Call PHP module startup
-            tracing::info!("Step 6: Calling php_module_startup()...");
+            tracing::info!("Step 5: Calling php_module_startup()...");
 
             let result = (self.php_module_startup)(self.sapi_module, ptr::null_mut());
 
