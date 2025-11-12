@@ -180,6 +180,7 @@ pub struct PhpFfi {
     #[allow(dead_code)]
     library: Library,
     // Function pointers
+    sapi_startup: Symbol<'static, unsafe extern "C" fn(*mut SapiModule) -> c_int>,
     php_module_startup: Symbol<'static, unsafe extern "C" fn(*mut SapiModule, *mut c_void) -> c_int>,
     php_module_shutdown: Symbol<'static, unsafe extern "C" fn() -> c_int>,
     php_request_startup: Symbol<'static, unsafe extern "C" fn() -> c_int>,
@@ -233,6 +234,13 @@ impl PhpFfi {
         };
 
         // Load function symbols
+        let sapi_startup = unsafe {
+            let symbol: Symbol<unsafe extern "C" fn(*mut SapiModule) -> c_int> =
+                library.get(b"sapi_startup\0")
+                    .context("Failed to load sapi_startup")?;
+            std::mem::transmute(symbol)
+        };
+
         let php_module_startup = unsafe {
             let symbol: Symbol<unsafe extern "C" fn(*mut SapiModule, *mut c_void) -> c_int> =
                 library.get(b"php_module_startup\0")
@@ -297,6 +305,7 @@ impl PhpFfi {
 
         Ok(Self {
             library,
+            sapi_startup,
             php_module_startup,
             php_module_shutdown,
             php_request_startup,
@@ -356,9 +365,24 @@ impl PhpFfi {
             sapi.additional_functions = ptr::null();
             tracing::info!("SAPI defaults set successfully");
 
-            // Call PHP module startup
-            tracing::info!("Step 5: Calling php_module_startup()...");
+            // Call sapi_startup first (required for embedded SAPI)
+            tracing::info!("Step 5: Calling sapi_startup()...");
             tracing::info!("SAPI module address: {:p}", self.sapi_module);
+
+            let result = (self.sapi_startup)(self.sapi_module);
+
+            if result != 0 {
+                tracing::error!("sapi_startup() failed with code: {}", result);
+                return Err(anyhow::anyhow!(
+                    "sapi_startup failed with code {} - SAPI initialization failed",
+                    result
+                ));
+            }
+
+            tracing::info!("sapi_startup() completed successfully with code: {}", result);
+
+            // Call PHP module startup
+            tracing::info!("Step 6: Calling php_module_startup()...");
 
             let result = (self.php_module_startup)(self.sapi_module, ptr::null_mut());
 
