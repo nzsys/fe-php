@@ -107,9 +107,11 @@ pub struct SapiModule {
 // Most PHP responses are < 64KB, pre-allocate to avoid reallocations
 thread_local! {
     static OUTPUT_BUFFER: Mutex<Vec<u8>> = Mutex::new(Vec::with_capacity(65536));
+    static HEADERS_BUFFER: Mutex<Vec<String>> = Mutex::new(Vec::new());
 }
 
 /// Callback for PHP output - captures to thread-local buffer
+/// This is called by PHP for each unbuffered write operation
 extern "C" fn php_output_handler(output: *const c_char, output_len: c_uint) -> c_uint {
     if output.is_null() || output_len == 0 {
         return 0;
@@ -125,6 +127,54 @@ extern "C" fn php_output_handler(output: *const c_char, output_len: c_uint) -> c
     }
 
     output_len
+}
+
+/// SAPI header structure (simplified)
+#[repr(C)]
+struct SapiHeader {
+    header: *mut c_char,
+    header_len: c_uint,
+}
+
+/// Callback for individual header handling
+/// This captures headers sent via header() function
+extern "C" fn php_header_handler(
+    sapi_header: *mut c_void,
+    _sapi_header_op_enum: *mut c_void,
+) -> c_int {
+    if sapi_header.is_null() {
+        return 0;  // SUCCESS
+    }
+
+    unsafe {
+        let header = sapi_header as *mut SapiHeader;
+        if (*header).header.is_null() || (*header).header_len == 0 {
+            return 0;
+        }
+
+        let header_data = std::slice::from_raw_parts(
+            (*header).header as *const u8,
+            (*header).header_len as usize,
+        );
+
+        if let Ok(header_str) = std::str::from_utf8(header_data) {
+            HEADERS_BUFFER.with(|buf| {
+                if let Ok(mut buffer) = buf.lock() {
+                    buffer.push(header_str.to_string());
+                }
+            });
+        }
+    }
+
+    0  // SUCCESS
+}
+
+/// Callback for sending all headers
+/// This is called before body output begins
+extern "C" fn php_send_headers(_sapi_headers: *mut c_void) -> c_int {
+    // Headers are already captured by php_header_handler
+    // Just return success to indicate headers were sent
+    0  // SUCCESS
 }
 
 /// SAPI activate callback - called at the start of each request
@@ -329,6 +379,8 @@ impl PhpFfi {
             sapi.deactivate = Some(php_sapi_deactivate);
             sapi.ub_write = Some(php_output_handler);
             sapi.flush = Some(php_flush);
+            sapi.header_handler = Some(php_header_handler);
+            sapi.send_headers = Some(php_send_headers);
             sapi.register_server_variables = Some(php_register_variables);
             sapi.read_post = Some(php_read_post);
             sapi.read_cookies = Some(php_read_cookies);
@@ -391,6 +443,13 @@ impl PhpFfi {
                 }
             } else {
                 tracing::warn!("Failed to acquire output buffer lock in request_startup");
+            }
+        });
+
+        // Clear headers buffer
+        HEADERS_BUFFER.with(|buf| {
+            if let Ok(mut buffer) = buf.lock() {
+                buffer.clear();
             }
         });
 
@@ -494,9 +553,25 @@ impl PhpFfi {
         })
     }
 
+    /// Get headers buffer contents
+    pub fn get_headers(&self) -> Vec<String> {
+        HEADERS_BUFFER.with(|buf| {
+            buf.lock().ok().map(|b| b.clone()).unwrap_or_default()
+        })
+    }
+
     /// Clear output buffer
     pub fn clear_output(&self) {
         OUTPUT_BUFFER.with(|buf| {
+            if let Ok(mut buffer) = buf.lock() {
+                buffer.clear();
+            }
+        });
+    }
+
+    /// Clear headers buffer
+    pub fn clear_headers(&self) {
+        HEADERS_BUFFER.with(|buf| {
             if let Ok(mut buffer) = buf.lock() {
                 buffer.clear();
             }

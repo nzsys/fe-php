@@ -137,13 +137,16 @@ impl PhpExecutor {
                 }
             };
 
+            // Get captured headers from SAPI callbacks
+            let captured_headers = ffi.get_headers();
+
             // Shutdown request
             ffi.request_shutdown();
 
             let execution_time_ms = start.elapsed().as_millis() as u64;
 
-            // Parse output for headers (PHP can output headers)
-            let (status_code, headers, body) = self.parse_php_output(&output)?;
+            // Parse output for headers (PHP can output headers directly or via header() function)
+            let (status_code, headers, body) = self.parse_php_output(&output, &captured_headers)?;
 
             Ok(PhpResponse {
                 status_code,
@@ -156,17 +159,52 @@ impl PhpExecutor {
     }
 
     /// Parse PHP output (handles both raw output and headers)
-    fn parse_php_output(&self, data: &[u8]) -> Result<(u16, HashMap<String, String>, Vec<u8>)> {
-        // Check if output contains headers (starts with header line)
-        // PHP can output headers using header() function
-        if data.len() < 4 || !data.starts_with(b"HTTP/") && !data.starts_with(b"Status:") && !data.starts_with(b"Content-Type:") {
-            // No headers, just body content
-            let mut headers = HashMap::new();
-            headers.insert("Content-Type".to_string(), "text/html; charset=UTF-8".to_string());
-            return Ok((200, headers, data.to_vec()));
+    /// captured_headers: Headers captured via SAPI header_handler callback
+    fn parse_php_output(&self, data: &[u8], captured_headers: &[String]) -> Result<(u16, HashMap<String, String>, Vec<u8>)> {
+        let mut status_code = 200u16;
+        let mut headers = HashMap::new();
+
+        // Process headers captured via SAPI callbacks (header() function)
+        for header_line in captured_headers {
+            if let Some((name, value)) = header_line.split_once(':') {
+                let name = name.trim();
+                let value = value.trim();
+
+                if name.eq_ignore_ascii_case("Status") {
+                    // Parse status code from "Status: 200 OK"
+                    if let Some(code_str) = value.split_whitespace().next() {
+                        status_code = code_str.parse().unwrap_or(200);
+                    }
+                } else if !name.is_empty() {
+                    headers.insert(name.to_string(), value.to_string());
+                }
+            }
         }
 
-        self.parse_headers_and_body(data)
+        // Check if output contains headers (raw output mode)
+        // This handles cases where PHP outputs headers directly without using header()
+        if data.len() >= 4 && (data.starts_with(b"HTTP/") || data.starts_with(b"Status:") || data.starts_with(b"Content-Type:")) {
+            // Parse headers from raw output
+            let (raw_status, raw_headers, body) = self.parse_headers_and_body(data)?;
+
+            // Merge raw headers with captured headers (raw headers take precedence for conflicts)
+            for (name, value) in raw_headers {
+                headers.insert(name, value);
+            }
+
+            if raw_status != 200 {
+                status_code = raw_status;
+            }
+
+            return Ok((status_code, headers, body));
+        }
+
+        // No raw headers, just body content with captured headers
+        if !headers.contains_key("Content-Type") && !headers.contains_key("content-type") {
+            headers.insert("Content-Type".to_string(), "text/html; charset=UTF-8".to_string());
+        }
+
+        Ok((status_code, headers, data.to_vec()))
     }
 
     /// Parse headers and body from raw output (optimized with memchr)
