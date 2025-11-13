@@ -1,7 +1,7 @@
 pub mod engine;
 pub mod rules;
 
-pub use engine::WafEngine;
+pub use engine::{WafEngine, WafResult};
 pub use rules::{WafRule, WafAction, WafSeverity};
 
 use anyhow::Result;

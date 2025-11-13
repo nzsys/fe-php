@@ -32,6 +32,7 @@ pub struct Server {
     redis_manager: Option<Arc<tokio::sync::RwLock<RedisSessionManager>>>,
     load_balancer: Option<Arc<LoadBalancingManager>>,
     deployment_manager: Option<Arc<DeploymentManager>>,
+    waf_engine: Option<Arc<crate::waf::WafEngine>>,
 }
 
 impl Server {
@@ -57,7 +58,7 @@ impl Server {
         };
 
         let worker_pool = WorkerPool::new(php_config, pool_config)?;
-        let metrics = MetricsCollector::new();
+        let metrics = Arc::new(MetricsCollector::new());
 
         // Initialize TLS if enabled
         let tls_manager = if config.tls.enable {
@@ -146,15 +147,32 @@ impl Server {
             None
         };
 
+        // Initialize WAF if enabled
+        let waf_engine = if config.waf.enable {
+            let rules = crate::waf::rules::default_rules();
+
+            let waf = crate::waf::WafEngine::new(
+                rules,
+                config.waf.mode.to_string(),
+                Arc::clone(&metrics),
+            );
+
+            info!("WAF enabled in '{}' mode with {} rules", config.waf.mode, waf.rules_count());
+            Some(Arc::new(waf))
+        } else {
+            None
+        };
+
         Ok(Self {
             config: Arc::new(config),
             worker_pool: Arc::new(worker_pool),
-            metrics: Arc::new(metrics),
+            metrics,
             tls_manager,
             geoip_manager,
             redis_manager,
             load_balancer,
             deployment_manager,
+            waf_engine,
         })
     }
 
@@ -267,6 +285,57 @@ impl Server {
         req: Request<Incoming>,
         remote_addr: SocketAddr,
     ) -> Result<Response<String>> {
+        // Check WAF if enabled
+        if let Some(ref waf) = self.waf_engine {
+            use hyper::body::Body;
+            use http_body_util::BodyExt;
+
+            // Decompose request first
+            let (parts, body) = req.into_parts();
+
+            // Extract information from parts
+            let method = parts.method.as_str();
+            let uri = parts.uri.to_string();
+            let query_string = parts.uri.query().unwrap_or("");
+
+            // Convert headers to HashMap
+            let mut headers_map = std::collections::HashMap::new();
+            for (key, value) in parts.headers.iter() {
+                if let Ok(value_str) = value.to_str() {
+                    headers_map.insert(key.to_string(), value_str.to_string());
+                }
+            }
+
+            // Collect body (for POST requests)
+            let body_bytes = body.collect().await
+                .map(|collected| collected.to_bytes())
+                .unwrap_or_default();
+
+            // Check request against WAF rules
+            match waf.check_request(method, &uri, query_string, &headers_map, &body_bytes) {
+                crate::waf::WafResult::Block(rule) => {
+                    warn!("WAF blocked request from {}: rule {} - {}", remote_addr, rule.id, rule.description);
+                    return Ok(Response::builder()
+                        .status(403)
+                        .body("Forbidden: Request blocked by WAF".to_string())
+                        .unwrap());
+                }
+                crate::waf::WafResult::Allow => {
+                    // Reconstruct request from parts and body
+                    let req = Request::from_parts(parts, http_body_util::Full::new(body_bytes));
+
+                    return router::handle_request(
+                        req,
+                        remote_addr,
+                        Arc::clone(&self.worker_pool),
+                        Arc::clone(&self.metrics),
+                        Arc::clone(&self.config),
+                    )
+                    .await;
+                }
+            }
+        }
+
         router::handle_request(
             req,
             remote_addr,

@@ -20,6 +20,10 @@ impl WafEngine {
         }
     }
 
+    pub fn rules_count(&self) -> usize {
+        self.rules.len()
+    }
+
     pub fn check_request(
         &self,
         method: &str,
