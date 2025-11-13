@@ -137,15 +137,24 @@ thread_local! {
 
 /// Callback for PHP output - captures to thread-local buffer
 extern "C" fn php_output_handler(output: *const c_char, output_len: c_uint) -> c_uint {
+    tracing::info!("ub_write called! output_len={}, output_ptr={:?}", output_len, output);
+
     if output.is_null() || output_len == 0 {
+        tracing::warn!("ub_write: output is null or length is 0");
         return 0;
     }
 
     unsafe {
         let data = std::slice::from_raw_parts(output as *const u8, output_len as usize);
+        tracing::info!("ub_write: capturing {} bytes: {:?}", data.len(), String::from_utf8_lossy(data));
+
         OUTPUT_BUFFER.with(|buf| {
             if let Ok(mut buffer) = buf.lock() {
+                let old_len = buffer.len();
                 buffer.extend_from_slice(data);
+                tracing::info!("ub_write: buffer size {} -> {} bytes", old_len, buffer.len());
+            } else {
+                tracing::error!("ub_write: failed to lock OUTPUT_BUFFER mutex");
             }
         });
     }
@@ -388,11 +397,15 @@ impl PhpFfi {
             // php_embed_init sets its own ub_write that goes to stdout
             // We need to replace it with our custom handler
             let sapi = &mut *self.sapi_module;
+
+            tracing::info!("Before override - ub_write: {:?}, flush: {:?}", sapi.ub_write, sapi.flush);
+
             sapi.ub_write = Some(php_output_handler);
             sapi.flush = Some(php_flush);
             sapi.send_headers = Some(php_send_headers);
             sapi.log_message = Some(php_log_message);
 
+            tracing::info!("After override - ub_write: {:?}, flush: {:?}", sapi.ub_write, sapi.flush);
             tracing::info!("SAPI callbacks overridden for output buffering");
         }
 
@@ -487,7 +500,23 @@ impl PhpFfi {
 
             // Execute the script
             tracing::info!("Executing PHP script: {}", script_path);
+            tracing::info!("About to call php_execute_script, checking OUTPUT_BUFFER before...");
+
+            // Check buffer before execution
+            let buf_before = OUTPUT_BUFFER.with(|buf| {
+                buf.lock().ok().map(|b| b.len()).unwrap_or(0)
+            });
+            tracing::info!("OUTPUT_BUFFER size before execution: {} bytes", buf_before);
+
             let result = (self.php_execute_script)(&mut file_handle);
+
+            tracing::info!("php_execute_script returned: {}", result);
+
+            // Check buffer immediately after execution
+            let buf_after = OUTPUT_BUFFER.with(|buf| {
+                buf.lock().ok().map(|b| b.len()).unwrap_or(0)
+            });
+            tracing::info!("OUTPUT_BUFFER size after execution: {} bytes", buf_after);
 
             // Get output buffer BEFORE cleanup
             let output = OUTPUT_BUFFER.with(|buf| {
