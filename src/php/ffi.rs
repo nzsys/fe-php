@@ -55,7 +55,7 @@ pub struct ZendFileHandle {
     pub handle: ZendFileHandleUnion,
     pub filename: *mut ZendString,
     pub opened_path: *mut ZendString,
-    pub handle_type: u8,  // ZendStreamType
+    pub type_: c_int,  // zend_stream_type (enum = int, not u8!)
     pub primary_script: bool,
     pub in_list: bool,
     pub buf: *mut c_char,
