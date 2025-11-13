@@ -91,6 +91,10 @@ impl WorkerPool {
             }
         };
 
+        // Initialize TSRM thread-local resources for this worker thread (ZTS only)
+        // This MUST be done before processing any PHP requests
+        executor.thread_init();
+
         // Wait for all workers to initialize before processing requests
         // This prevents race conditions during startup
         barrier.wait();
@@ -117,6 +121,9 @@ impl WorkerPool {
                 break;
             }
         }
+
+        // Free TSRM thread-local resources before thread exits (ZTS only)
+        executor.thread_cleanup();
 
         info!("Worker {} shutting down after {} requests", worker_id, requests_handled);
     }
@@ -149,6 +156,8 @@ mod tests {
             document_root: PathBuf::from("/var/www/html"),
             worker_pool_size: 2,
             worker_max_requests: 1000,
+            use_fpm: false,
+            fpm_socket: String::from("127.0.0.1:9000"),
         };
 
         let pool_config = WorkerPoolConfig {

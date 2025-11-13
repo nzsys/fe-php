@@ -1,4 +1,4 @@
-use super::Config;
+use super::{Config, WafMode};
 use anyhow::Result;
 
 pub fn validate_config(config: &Config) -> Result<Vec<String>> {
@@ -64,12 +64,8 @@ pub fn validate_config(config: &Config) -> Result<Vec<String>> {
 
     // Validate WAF
     if config.waf.enable {
-        if !["off", "learn", "detect", "block"].contains(&config.waf.mode.as_str()) {
-            warnings.push(format!(
-                "[X] Invalid WAF mode: {}. Must be one of: off, learn, detect, block",
-                config.waf.mode
-            ));
-        }
+        // Note: WafMode is now an enum, so invalid values are caught at deserialization time
+        // No need to validate the mode value here
 
         if let Some(ref rules_path) = config.waf.rules_path {
             if !rules_path.exists() {
@@ -123,7 +119,7 @@ pub fn validate_config(config: &Config) -> Result<Vec<String>> {
         );
     }
 
-    if config.waf.enable && config.waf.mode == "off" {
+    if config.waf.enable && config.waf.mode == WafMode::Off {
         warnings.push(
             "[*] WAF is enabled but mode is 'off'. Consider using 'learn', 'detect', or 'block'".to_string()
         );

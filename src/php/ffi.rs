@@ -8,8 +8,6 @@ use std::sync::Mutex;
 
 #[cfg(unix)]
 use libloading::os::unix::Library as UnixLibrary;
-#[cfg(unix)]
-use std::os::raw::c_int as flag_type;
 
 // PHP types
 type ZvalPtr = *mut c_void;
@@ -174,10 +172,27 @@ extern "C" fn php_flush(_server_context: *mut c_void) {
     // Stub implementation - we buffer everything until request completes
 }
 
+/// Stub callback for sending headers
+extern "C" fn php_send_headers(_sapi_headers: *mut c_void) -> c_int {
+    // Return SAPI_HEADER_SENT_SUCCESSFULLY
+    1
+}
+
+/// Stub callback for sending individual header
+extern "C" fn php_send_header(_sapi_header: *mut c_void, _server_context: *mut c_void) {
+    // Stub implementation
+}
+
+/// Stub callback for reading POST data
+extern "C" fn php_read_post_data(_sapi_request_info: *mut c_void) {
+    // Stub implementation
+}
+
 /// PHP FFI bindings
 pub struct PhpFfi {
     library: Library,
     // Function pointers
+    sapi_startup: Symbol<'static, unsafe extern "C" fn(*mut SapiModule)>,
     php_module_startup: Symbol<'static, unsafe extern "C" fn(*mut SapiModule, *mut c_void) -> c_int>,
     php_module_shutdown: Symbol<'static, unsafe extern "C" fn() -> c_int>,
     php_request_startup: Symbol<'static, unsafe extern "C" fn() -> c_int>,
@@ -185,6 +200,11 @@ pub struct PhpFfi {
     php_execute_script: Symbol<'static, unsafe extern "C" fn(*mut ZendFileHandle) -> c_int>,
     zend_stream_init_filename: Symbol<'static, unsafe extern "C" fn(*mut ZendFileHandle, *const c_char)>,
     zend_destroy_file_handle: Symbol<'static, unsafe extern "C" fn(*mut ZendFileHandle)>,
+    // TSRM functions for ZTS (Zend Thread Safety) support
+    php_tsrm_startup_ex: Option<Symbol<'static, unsafe extern "C" fn(c_int) -> c_int>>,
+    tsrm_shutdown: Option<Symbol<'static, unsafe extern "C" fn()>>,
+    ts_resource: Option<Symbol<'static, unsafe extern "C" fn(c_int) -> *mut c_void>>,
+    ts_free_thread: Option<Symbol<'static, unsafe extern "C" fn()>>,
     sapi_module: *mut SapiModule,
     // Keep CStrings alive for the lifetime of PhpFfi
     _sapi_name: Box<CString>,
@@ -198,26 +218,24 @@ impl PhpFfi {
             // Use platform-specific loading flags for better compatibility
             #[cfg(unix)]
             {
-                // For single-worker mode (workers=1), PHP needs RTLD_GLOBAL
-                // PHP's internal extensions and opcache require symbols in global namespace
-                //
-                // RTLD_NOW (2): Resolve all symbols immediately (catch errors early)
-                // RTLD_GLOBAL (0x100): Make symbols available globally (required for PHP execution)
-                //
-                // Note: RTLD_GLOBAL is safe for single-worker mode since there's no
-                // symbol conflict between workers. For multi-worker, would need RTLD_LOCAL
-                // but that prevents PHP from executing scripts properly.
-                const RTLD_NOW: flag_type = 2;
-                const RTLD_GLOBAL: flag_type = 0x100;
+                #[cfg(target_os = "freebsd")]
+                const FLAGS: c_int = libc::RTLD_NOW | 0x100; // FreeBSD: RTLD_GLOBAL = 0x100
+
+                #[cfg(target_os = "macos")]
+                const FLAGS: c_int = libc::RTLD_NOW | 0x8; // macOS: RTLD_GLOBAL = 0x8
+
+                #[cfg(not(any(target_os = "freebsd", target_os = "macos")))]
+                const FLAGS: c_int = libc::RTLD_NOW | libc::RTLD_GLOBAL; // Other Unix: use libc constant
 
                 tracing::info!(
-                    "Loading libphp from {:?} with RTLD_NOW | RTLD_GLOBAL flags",
-                    library_path.as_ref()
+                    "Loading libphp from {:?} (flags: {:#x})",
+                    library_path.as_ref(),
+                    FLAGS
                 );
 
                 let unix_lib = UnixLibrary::open(
                     Some(library_path.as_ref()),
-                    RTLD_NOW | RTLD_GLOBAL
+                    FLAGS
                 ).with_context(|| format!("Failed to load libphp from {:?}", library_path.as_ref()))?;
 
                 Library::from(unix_lib)
@@ -231,6 +249,13 @@ impl PhpFfi {
         };
 
         // Load function symbols
+        let sapi_startup = unsafe {
+            let symbol: Symbol<unsafe extern "C" fn(*mut SapiModule) -> c_int> =
+                library.get(b"sapi_startup\0")
+                    .context("Failed to load sapi_startup")?;
+            std::mem::transmute(symbol)
+        };
+
         let php_module_startup = unsafe {
             let symbol: Symbol<unsafe extern "C" fn(*mut SapiModule, *mut c_void) -> c_int> =
                 library.get(b"php_module_startup\0")
@@ -289,12 +314,47 @@ impl PhpFfi {
             *symbol
         };
 
+        // Try to load TSRM functions (only present in ZTS builds)
+        let php_tsrm_startup_ex = unsafe {
+            library.get::<unsafe extern "C" fn(c_int) -> c_int>(b"php_tsrm_startup_ex\0")
+                .ok()
+                .map(|symbol| std::mem::transmute(symbol))
+        };
+
+        let tsrm_shutdown = unsafe {
+            library.get::<unsafe extern "C" fn()>(b"tsrm_shutdown\0")
+                .ok()
+                .map(|symbol| std::mem::transmute(symbol))
+        };
+
+        let ts_resource = unsafe {
+            library.get::<unsafe extern "C" fn(c_int) -> *mut c_void>(b"ts_resource_ex\0")
+                .ok()
+                .map(|symbol| std::mem::transmute(symbol))
+        };
+
+        let ts_free_thread = unsafe {
+            library.get::<unsafe extern "C" fn()>(b"ts_free_thread\0")
+                .ok()
+                .map(|symbol| std::mem::transmute(symbol))
+        };
+
+        if php_tsrm_startup_ex.is_some() {
+            tracing::info!("ZTS (Zend Thread Safety) functions detected - will initialize TSRM");
+        } else {
+            tracing::info!("NTS (Non-Thread Safe) build detected - TSRM not available");
+        }
+
         // Create CStrings that will live for the lifetime of PhpFfi
-        let sapi_name = Box::new(CString::new("fe-php").unwrap());
-        let sapi_pretty_name = Box::new(CString::new("fe-php embedded").unwrap());
+        let sapi_name = Box::new(CString::new("fe-php")
+            .context("Failed to create SAPI name CString")?);
+        let sapi_pretty_name = Box::new(CString::new("fe-php embedded")
+            .context("Failed to create SAPI pretty name CString")?);
+
 
         Ok(Self {
             library,
+            sapi_startup,
             php_module_startup,
             php_module_shutdown,
             php_request_startup,
@@ -302,6 +362,10 @@ impl PhpFfi {
             php_execute_script,
             zend_stream_init_filename,
             zend_destroy_file_handle,
+            php_tsrm_startup_ex,
+            tsrm_shutdown,
+            ts_resource,
+            ts_free_thread,
             sapi_module,
             _sapi_name: sapi_name,
             _sapi_pretty_name: sapi_pretty_name,
@@ -311,6 +375,25 @@ impl PhpFfi {
     /// Initialize PHP module
     pub fn module_startup(&self) -> Result<()> {
         unsafe {
+            // Initialize TSRM for ZTS builds BEFORE configuring SAPI
+            if let Some(php_tsrm_startup_ex) = &self.php_tsrm_startup_ex {
+                tracing::info!("Initializing PHP TSRM (Thread Safe Resource Manager) for ZTS build...");
+
+                // php_tsrm_startup_ex does all the necessary initialization:
+                // - Calls tsrm_startup internally
+                // - Allocates PHP-specific resource IDs (compiler_globals, executor_globals, etc.)
+                // - Sets up thread-local storage for the main thread
+                // Parameter: expected_threads (1 for now, more workers can be added later)
+                let result = php_tsrm_startup_ex(1);
+                if result != 1 {
+                    return Err(anyhow::anyhow!(
+                        "php_tsrm_startup_ex failed with code {} - ZTS initialization failed",
+                        result
+                    ));
+                }
+                tracing::info!("PHP TSRM initialized successfully (includes thread-local storage)");
+            }
+
             // Configure SAPI module
             if self.sapi_module.is_null() {
                 return Err(anyhow::anyhow!(
@@ -333,6 +416,8 @@ impl PhpFfi {
             sapi.read_post = Some(php_read_post);
             sapi.read_cookies = Some(php_read_cookies);
             sapi.log_message = Some(php_log_message);
+            sapi.send_headers = Some(php_send_headers);
+            sapi.send_header = Some(php_send_header);
 
             // Set additional fields to safe defaults
             sapi.php_ini_path_override = ptr::null_mut();
@@ -345,7 +430,13 @@ impl PhpFfi {
 
             tracing::debug!("SAPI module configured: name={:?}", CStr::from_ptr(sapi.name));
 
-            // Call PHP module startup
+            // Call sapi_startup() to initialize SAPI infrastructure (hash tables, etc.)
+            // This MUST be called before php_module_startup(), following FrankenPHP's pattern
+            tracing::debug!("Calling sapi_startup()...");
+            (self.sapi_startup)(self.sapi_module);
+            tracing::debug!("sapi_startup() completed successfully");
+
+            // Call PHP module startup (this initializes all PHP modules)
             tracing::debug!("Calling php_module_startup()...");
             let result = (self.php_module_startup)(self.sapi_module, ptr::null_mut());
             if result != 0 {
@@ -373,9 +464,46 @@ impl PhpFfi {
                     result
                 ));
             }
+
+            // Shutdown TSRM for ZTS builds AFTER PHP module shutdown
+            if let Some(tsrm_shutdown) = &self.tsrm_shutdown {
+                tracing::info!("Shutting down TSRM (Thread Safe Resource Manager)...");
+                tsrm_shutdown();
+                tracing::info!("TSRM shutdown completed");
+            }
         }
         tracing::debug!("PHP module shutdown completed successfully");
         Ok(())
+    }
+
+    /// Initialize TSRM thread-local resources for the current thread (ZTS only)
+    /// This MUST be called once by each worker thread before processing requests
+    pub fn thread_init(&self) {
+        unsafe {
+            if let Some(ts_resource) = &self.ts_resource {
+                // Call ts_resource(0) to fetch/allocate thread-local storage for this thread
+                // Parameter 0 means "allocate resources for the current thread if not already allocated"
+                tracing::info!("Initializing TSRM thread-local storage for worker thread");
+                ts_resource(0);
+                tracing::info!("TSRM thread-local storage initialized");
+            } else {
+                tracing::warn!("ts_resource function not available - skipping thread initialization (NTS build?)");
+            }
+        }
+    }
+
+    /// Free TSRM thread-local resources for the current thread (ZTS only)
+    /// This MUST be called when a worker thread exits
+    pub fn thread_cleanup(&self) {
+        unsafe {
+            if let Some(ts_free_thread) = &self.ts_free_thread {
+                tracing::info!("Freeing TSRM thread-local storage for worker thread");
+                ts_free_thread();
+                tracing::info!("TSRM thread-local storage freed");
+            } else {
+                tracing::debug!("ts_free_thread function not available - skipping thread cleanup (NTS build?)");
+            }
+        }
     }
 
     /// Start a PHP request
@@ -504,7 +632,23 @@ impl PhpFfi {
     }
 }
 
-// Thread-safe wrapper
+// SAFETY: PhpFfi is thread-safe for the following reasons:
+//
+// 1. Send: PhpFfi can be safely transferred between threads because:
+//    - Library handle is thread-safe (libloading guarantees this)
+//    - Function pointers are 'static and immutable
+//    - All fields are either thread-safe or immutable after construction
+//    - PHP module is initialized once globally before any threading occurs
+//
+// 2. Sync: PhpFfi can be safely shared between threads because:
+//    - All mutation is protected by the OUTPUT_BUFFER thread-local storage
+//    - PHP's internal state is managed per-worker using thread-local storage
+//    - Each worker has its own request lifecycle (request_startup/shutdown)
+//    - No shared mutable state exists between workers
+//
+// Note: In single-worker mode (workers=1), there is no concurrency.
+// In multi-worker mode, each worker operates independently with its own
+// PHP request context, avoiding any race conditions.
 unsafe impl Send for PhpFfi {}
 unsafe impl Sync for PhpFfi {}
 
