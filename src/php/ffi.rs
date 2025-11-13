@@ -183,6 +183,7 @@ pub struct PhpFfi {
     php_request_startup: Symbol<'static, unsafe extern "C" fn() -> c_int>,
     php_request_shutdown: Symbol<'static, unsafe extern "C" fn(*mut c_void) -> c_void>,
     php_execute_script: Symbol<'static, unsafe extern "C" fn(*mut ZendFileHandle) -> c_int>,
+    php_output_end_all: Symbol<'static, unsafe extern "C" fn()>,
     zend_stream_init_filename: Symbol<'static, unsafe extern "C" fn(*mut ZendFileHandle, *const c_char)>,
     zend_destroy_file_handle: Symbol<'static, unsafe extern "C" fn(*mut ZendFileHandle)>,
     sapi_module: *mut SapiModule,
@@ -266,6 +267,14 @@ impl PhpFfi {
             std::mem::transmute(symbol)
         };
 
+        // Load php_output_end_all (to flush output buffers after script execution)
+        let php_output_end_all = unsafe {
+            let symbol: Symbol<unsafe extern "C" fn()> =
+                library.get(b"php_output_end_all\0")
+                    .context("Failed to load php_output_end_all")?;
+            std::mem::transmute(symbol)
+        };
+
         // Load zend_stream_init_filename (PHP 8.1+, required for proper file handle initialization)
         let zend_stream_init_filename = unsafe {
             let symbol: Symbol<unsafe extern "C" fn(*mut ZendFileHandle, *const c_char)> =
@@ -300,6 +309,7 @@ impl PhpFfi {
             php_request_startup,
             php_request_shutdown,
             php_execute_script,
+            php_output_end_all,
             zend_stream_init_filename,
             zend_destroy_file_handle,
             sapi_module,
@@ -447,6 +457,12 @@ impl PhpFfi {
             // Execute the script
             tracing::trace!("Executing PHP script: {}", script_path);
             let result = (self.php_execute_script)(&mut file_handle);
+
+            // CRITICAL: Flush all output buffers immediately after script execution!
+            // PHP buffers output internally, and we need to flush it to trigger ub_write callbacks
+            // This MUST be called before checking the output buffer, otherwise buffer will be empty
+            tracing::trace!("Flushing output buffers...");
+            (self.php_output_end_all)();
 
             // Clean up file handle (important to avoid memory leaks)
             (self.zend_destroy_file_handle)(&mut file_handle);
