@@ -52,7 +52,7 @@ pub struct ZendFileHandle {
     pub handle: ZendFileHandleUnion,
     pub filename: *mut ZendString,
     pub opened_path: *mut ZendString,
-    pub handle_type: u8,  // ZendStreamType
+    pub type_: c_int,  // zend_stream_type (enum = int, not u8!)
     pub primary_script: bool,
     pub in_list: bool,
     pub buf: *mut c_char,
@@ -455,14 +455,12 @@ impl PhpFfi {
         });
 
         unsafe {
-            // Initialize SAPI globals before request startup (like FrankenPHP)
-            if !self.sapi_globals.is_null() {
-                // Set server_context to non-null (FrankenPHP uses (void*)1)
-                (*self.sapi_globals).server_context = 1 as *mut c_void;
-
-                // Set default HTTP response code to 200
-                (*self.sapi_globals).sapi_headers.http_response_code = 200;
-            }
+            // Note: SAPI globals initialization is disabled for now due to complex structure definitions
+            // TODO: Properly define zend_llist and other structures to enable this
+            // if !self.sapi_globals.is_null() {
+            //     (*self.sapi_globals).server_context = 1 as *mut c_void;
+            //     (*self.sapi_globals).sapi_headers.http_response_code = 200;
+            // }
 
             let result = (self.php_request_startup)();
             if result != 0 {
