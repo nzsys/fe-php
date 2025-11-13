@@ -187,20 +187,26 @@ extern "C" fn php_read_cookies() -> *mut c_char {
 }
 
 /// Stub callback for logging messages
-extern "C" fn php_log_message(message: *const c_char, _syslog_type: c_int) {
+extern "C" fn php_log_message(message: *const c_char, syslog_type: c_int) {
+    tracing::warn!("php_log_message called! syslog_type={}, message_ptr={:?}", syslog_type, message);
+
     // Log PHP messages to stderr
     if !message.is_null() {
         unsafe {
             let msg = CStr::from_ptr(message);
             if let Ok(s) = msg.to_str() {
+                tracing::error!("[PHP Error] {}", s);
                 eprintln!("[PHP] {}", s);
             }
         }
+    } else {
+        tracing::warn!("php_log_message called with null message");
     }
 }
 
 /// Stub callback for flushing output
 extern "C" fn php_flush(_server_context: *mut c_void) {
+    tracing::info!("php_flush called!");
     // Stub implementation - we buffer everything until request completes
 }
 
@@ -209,6 +215,7 @@ extern "C" fn php_flush(_server_context: *mut c_void) {
 /// For embedded mode, we capture headers via header() calls and handle them separately
 /// This callback just signals success to PHP so it continues execution
 extern "C" fn php_send_headers(_sapi_headers: *mut c_void) -> c_int {
+    tracing::info!("php_send_headers called!");
     // Return SAPI_HEADER_SENT_SUCCESSFULLY (0)
     // In embedded mode, headers are parsed from output buffer after script execution
     0
