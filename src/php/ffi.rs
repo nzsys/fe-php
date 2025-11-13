@@ -424,6 +424,8 @@ impl PhpFfi {
 
     /// Start a PHP request
     pub fn request_startup(&self) -> Result<()> {
+        tracing::info!("request_startup: Starting PHP request...");
+
         // Clear output buffer (preserves capacity for reuse - buffer pooling)
         OUTPUT_BUFFER.with(|buf| {
             if let Ok(mut buffer) = buf.lock() {
@@ -446,7 +448,10 @@ impl PhpFfi {
             //     (*self.sapi_globals).sapi_headers.http_response_code = 200;
             // }
 
+            tracing::info!("request_startup: Calling php_request_startup()...");
             let result = (self.php_request_startup)();
+            tracing::info!("request_startup: php_request_startup() returned: {}", result);
+
             if result != 0 {
                 tracing::error!("php_request_startup failed with code {}", result);
                 return Err(anyhow::anyhow!(
@@ -454,15 +459,19 @@ impl PhpFfi {
                     result
                 ));
             }
+
+            tracing::info!("request_startup: PHP request started successfully");
         }
         Ok(())
     }
 
     /// Shutdown a PHP request
     pub fn request_shutdown(&self) {
+        tracing::info!("request_shutdown: Shutting down PHP request...");
         unsafe {
             (self.php_request_shutdown)(ptr::null_mut());
         }
+        tracing::info!("request_shutdown: PHP request shutdown completed");
     }
 
     /// Execute a PHP script using embedded libphp
