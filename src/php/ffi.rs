@@ -174,6 +174,16 @@ extern "C" fn php_flush(_server_context: *mut c_void) {
     // Stub implementation - we buffer everything until request completes
 }
 
+/// SAPI callback for sending headers
+/// PHP calls this when it's ready to send HTTP headers
+/// For embedded mode, we capture headers via header() calls and handle them separately
+/// This callback just signals success to PHP so it continues execution
+extern "C" fn php_send_headers(_sapi_headers: *mut c_void) -> c_int {
+    // Return SAPI_HEADER_SENT_SUCCESSFULLY (0)
+    // In embedded mode, headers are parsed from output buffer after script execution
+    0
+}
+
 /// PHP FFI bindings
 pub struct PhpFfi {
     library: Library,
@@ -329,6 +339,7 @@ impl PhpFfi {
             sapi.deactivate = Some(php_sapi_deactivate);
             sapi.ub_write = Some(php_output_handler);
             sapi.flush = Some(php_flush);
+            sapi.send_headers = Some(php_send_headers);
             sapi.register_server_variables = Some(php_register_variables);
             sapi.read_post = Some(php_read_post);
             sapi.read_cookies = Some(php_read_cookies);
@@ -340,18 +351,10 @@ impl PhpFfi {
             sapi.php_ini_ignore = 0;
             sapi.php_ini_ignore_cwd = 0;
             sapi.phpinfo_as_text = 0;
-
-            // CRITICAL: Disable output buffering to ensure output goes directly to ub_write
-            // Format: "directive=value\n" - must be null-terminated
-            // This prevents PHP from buffering output internally
-            let ini_entries = CString::new("output_buffering=0\nimplicit_flush=1\n").unwrap();
-            sapi.ini_entries = ini_entries.as_ptr() as *mut c_char;
-            std::mem::forget(ini_entries); // Keep string alive (leaks intentionally)
-
+            sapi.ini_entries = ptr::null_mut();
             sapi.additional_functions = ptr::null();
 
             tracing::debug!("SAPI module configured: name={:?}", CStr::from_ptr(sapi.name));
-            tracing::info!("PHP INI: output_buffering=0, implicit_flush=1 (no buffering)");
 
             // Call PHP module startup
             tracing::debug!("Calling php_module_startup()...");
