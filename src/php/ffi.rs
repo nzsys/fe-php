@@ -59,6 +59,35 @@ pub struct ZendFileHandle {
     pub buf_len: usize,
 }
 
+/// PHP sapi_headers_struct
+#[repr(C)]
+pub struct SapiHeadersStruct {
+    pub headers: *mut c_void,  // zend_llist
+    pub http_response_code: c_int,
+    pub http_status_line: *mut c_char,
+}
+
+/// PHP sapi_request_info structure (simplified - only fields we need)
+#[repr(C)]
+pub struct SapiRequestInfo {
+    pub request_method: *const c_char,
+    pub query_string: *mut c_char,
+    pub cookie_data: *mut c_char,
+    pub content_length: i64,
+    pub path_translated: *mut c_char,
+    pub request_uri: *mut c_char,
+    // ... other fields exist but we don't need them for now
+}
+
+/// PHP sapi_globals_struct (simplified - only fields we need)
+#[repr(C)]
+pub struct SapiGlobalsStruct {
+    pub server_context: *mut c_void,
+    pub request_info: SapiRequestInfo,
+    pub sapi_headers: SapiHeadersStruct,
+    // ... other fields exist but we don't need them for now
+}
+
 /// PHP SAPI module structure
 #[repr(C)]
 pub struct SapiModule {
@@ -188,6 +217,7 @@ pub struct PhpFfi {
     zend_stream_init_filename: Symbol<'static, unsafe extern "C" fn(*mut ZendFileHandle, *const c_char)>,
     zend_destroy_file_handle: Symbol<'static, unsafe extern "C" fn(*mut ZendFileHandle)>,
     sapi_module: *mut SapiModule,
+    sapi_globals: *mut SapiGlobalsStruct,
     // Keep CStrings alive for the lifetime of PhpFfi
     _sapi_name: Box<CString>,
     _sapi_pretty_name: Box<CString>,
@@ -292,14 +322,27 @@ impl PhpFfi {
             *symbol
         };
 
+        // Get SAPI globals pointer
+        let sapi_globals: *mut SapiGlobalsStruct = unsafe {
+            let symbol: Symbol<*mut SapiGlobalsStruct> = library.get(b"sapi_globals\0")
+                .context("Failed to load sapi_globals")?;
+            *symbol
+        };
+
         // Create CStrings that will live for the lifetime of PhpFfi
         let sapi_name = Box::new(CString::new("fe-php").unwrap());
         let sapi_pretty_name = Box::new(CString::new("fe-php embedded").unwrap());
 
-        // Create INI entries string to enable error display for debugging
-        // This helps us see PHP errors during script execution
+        // Create INI entries string to match PHP embed SAPI defaults
+        // These settings are critical for proper script execution
         let ini_entries = Box::new(CString::new(
-            "display_errors=1\n\
+            "html_errors=0\n\
+             register_argc_argv=1\n\
+             implicit_flush=1\n\
+             output_buffering=0\n\
+             max_execution_time=0\n\
+             max_input_time=-1\n\
+             display_errors=1\n\
              display_startup_errors=1\n\
              error_reporting=32767\n\
              log_errors=1\n"
@@ -315,6 +358,7 @@ impl PhpFfi {
             zend_stream_init_filename,
             zend_destroy_file_handle,
             sapi_module,
+            sapi_globals,
             _sapi_name: sapi_name,
             _sapi_pretty_name: sapi_pretty_name,
             _ini_entries: ini_entries,
@@ -411,6 +455,15 @@ impl PhpFfi {
         });
 
         unsafe {
+            // Initialize SAPI globals before request startup (like FrankenPHP)
+            if !self.sapi_globals.is_null() {
+                // Set server_context to non-null (FrankenPHP uses (void*)1)
+                (*self.sapi_globals).server_context = 1 as *mut c_void;
+
+                // Set default HTTP response code to 200
+                (*self.sapi_globals).sapi_headers.http_response_code = 200;
+            }
+
             let result = (self.php_request_startup)();
             if result != 0 {
                 tracing::error!("php_request_startup failed with code {}", result);
@@ -459,6 +512,9 @@ impl PhpFfi {
             // Initialize file handle using zend_stream_init_filename (PHP 8.1+)
             // This function properly sets up all fields including the union
             (self.zend_stream_init_filename)(&mut file_handle, path_cstr.as_ptr());
+
+            // Mark as primary script (critical for execution)
+            file_handle.primary_script = true;
 
             // Execute the script
             tracing::trace!("Executing PHP script: {}", script_path);
