@@ -515,44 +515,48 @@ impl PhpFfi {
             file_handle.primary_script = true;
 
             // Execute the script
-            tracing::trace!("Executing PHP script: {}", script_path);
+            tracing::info!("Executing PHP script: {}", script_path);
             let result = (self.php_execute_script)(&mut file_handle);
+
+            // Get output buffer BEFORE cleanup
+            let output = OUTPUT_BUFFER.with(|buf| {
+                buf.lock().ok().map(|b| b.clone()).unwrap_or_default()
+            });
+
+            tracing::info!(
+                "php_execute_script returned: {}, output buffer size: {} bytes",
+                result,
+                output.len()
+            );
+
+            // Log output buffer content for debugging
+            if !output.is_empty() {
+                let preview = String::from_utf8_lossy(&output[..output.len().min(200)]);
+                tracing::info!("Output buffer preview: {:?}", preview);
+            } else {
+                tracing::warn!("Output buffer is empty!");
+            }
 
             // Clean up file handle (important to avoid memory leaks)
             (self.zend_destroy_file_handle)(&mut file_handle);
 
+            // FrankenPHP ignores return value and checks EG(exit_status) instead
+            // For now, we'll return output regardless of return code
+            // TODO: Access EG(exit_status) properly
             if result != 0 {
-                // Get output even on error (might contain error messages)
-                let output = OUTPUT_BUFFER.with(|buf| {
-                    buf.lock().ok().map(|b| b.clone()).unwrap_or_default()
-                });
-
-                tracing::error!(
-                    "PHP script execution failed with code {} for script: {}",
-                    result,
-                    script_path
+                tracing::warn!(
+                    "php_execute_script returned non-zero: {} (may be exit code, not error)",
+                    result
                 );
-
-                if !output.is_empty() {
-                    // Return output even if script failed (contains error messages)
-                    tracing::debug!("Returning error output ({} bytes)", output.len());
-                    return Ok(output);
-                }
-
-                return Err(anyhow::anyhow!(
-                    "PHP script execution failed with code {} for script: {}",
-                    result,
-                    script_path
-                ));
             }
         }
 
-        // Get captured output
+        // Get captured output (again in case it was modified)
         let output = OUTPUT_BUFFER.with(|buf| {
             buf.lock().ok().map(|b| b.clone()).unwrap_or_default()
         });
 
-        tracing::trace!("PHP script executed successfully, output size: {} bytes", output.len());
+        tracing::info!("Final output size: {} bytes", output.len());
 
         Ok(output)
     }
