@@ -11,9 +11,6 @@ use libloading::os::unix::Library as UnixLibrary;
 #[cfg(unix)]
 use std::os::raw::c_int as flag_type;
 
-// PHP types
-type ZvalPtr = *mut c_void;
-
 // zend_stream_type enum (PHP 8.1+)
 #[repr(u8)]
 #[derive(Debug, Clone, Copy)]
@@ -127,11 +124,6 @@ extern "C" fn php_output_handler(output: *const c_char, output_len: c_uint) -> c
     output_len
 }
 
-/// SAPI activate callback - called at the start of each request
-extern "C" fn php_sapi_activate() -> c_int {
-    0 // SUCCESS
-}
-
 /// SAPI deactivate callback - called at the end of each request
 extern "C" fn php_sapi_deactivate() -> c_int {
     0 // SUCCESS
@@ -174,9 +166,19 @@ extern "C" fn php_flush(_server_context: *mut c_void) {
     // Stub implementation - we buffer everything until request completes
 }
 
+/// SAPI callback for sending headers
+/// PHP calls this when it's ready to send HTTP headers
+/// For embedded mode, we capture headers via header() calls and handle them separately
+/// This callback just signals success to PHP so it continues execution
+extern "C" fn php_send_headers(_sapi_headers: *mut c_void) -> c_int {
+    // Return SAPI_HEADER_SENT_SUCCESSFULLY (0)
+    // In embedded mode, headers are parsed from output buffer after script execution
+    0
+}
+
 /// PHP FFI bindings
 pub struct PhpFfi {
-    library: Library,
+    _library: Library,  // Keep library loaded for the lifetime of PhpFfi
     // Function pointers
     php_module_startup: Symbol<'static, unsafe extern "C" fn(*mut SapiModule, *mut c_void) -> c_int>,
     php_module_shutdown: Symbol<'static, unsafe extern "C" fn() -> c_int>,
@@ -294,7 +296,7 @@ impl PhpFfi {
         let sapi_pretty_name = Box::new(CString::new("fe-php embedded").unwrap());
 
         Ok(Self {
-            library,
+            _library: library,
             php_module_startup,
             php_module_shutdown,
             php_request_startup,
@@ -325,10 +327,12 @@ impl PhpFfi {
             sapi.pretty_name = self._sapi_pretty_name.as_ptr();
 
             // Set required callbacks
-            sapi.activate = Some(php_sapi_activate);
+            // Note: activate is set to None (like FrankenPHP) - not needed for embedded SAPI
+            sapi.activate = None;
             sapi.deactivate = Some(php_sapi_deactivate);
             sapi.ub_write = Some(php_output_handler);
             sapi.flush = Some(php_flush);
+            sapi.send_headers = Some(php_send_headers);
             sapi.register_server_variables = Some(php_register_variables);
             sapi.read_post = Some(php_read_post);
             sapi.read_cookies = Some(php_read_cookies);

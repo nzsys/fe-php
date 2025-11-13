@@ -94,7 +94,7 @@ impl PhpExecutor {
             let fastcgi = self.fastcgi.as_ref().unwrap();
 
             // Use tokio's block_in_place to run async code in blocking context
-            let (stdout, stderr) = tokio::task::block_in_place(|| {
+            let (stdout, _stderr) = tokio::task::block_in_place(|| {
                 tokio::runtime::Handle::current().block_on(
                     fastcgi.execute(
                         script_path.to_str().unwrap(),
