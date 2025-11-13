@@ -229,6 +229,7 @@ pub struct PhpFfi {
     // Keep CStrings alive for the lifetime of PhpFfi
     _sapi_name: Box<CString>,
     _sapi_pretty_name: Box<CString>,
+    _ini_entries: Box<CString>,
 }
 
 impl PhpFfi {
@@ -340,6 +341,21 @@ impl PhpFfi {
         let sapi_name = Box::new(CString::new("fe-php").unwrap());
         let sapi_pretty_name = Box::new(CString::new("fe-php embedded").unwrap());
 
+        // Create INI entries string to match PHP embed SAPI defaults
+        // These settings are critical for proper script execution
+        let ini_entries = Box::new(CString::new(
+            "html_errors=0\n\
+             register_argc_argv=1\n\
+             implicit_flush=1\n\
+             output_buffering=0\n\
+             max_execution_time=0\n\
+             max_input_time=-1\n\
+             display_errors=1\n\
+             display_startup_errors=1\n\
+             error_reporting=32767\n\
+             log_errors=1\n"
+        ).unwrap());
+
         Ok(Self {
             library,
             php_module_startup,
@@ -353,6 +369,7 @@ impl PhpFfi {
             sapi_globals,
             _sapi_name: sapi_name,
             _sapi_pretty_name: sapi_pretty_name,
+            _ini_entries: ini_entries,
         })
     }
 
@@ -389,10 +406,15 @@ impl PhpFfi {
             sapi.php_ini_ignore = 0;
             sapi.php_ini_ignore_cwd = 0;
             sapi.phpinfo_as_text = 0;
-            sapi.ini_entries = ptr::null_mut();
+
+            // Set INI entries to match PHP embed SAPI defaults
+            // Critical for proper script execution (output_buffering=0, implicit_flush=1, etc.)
+            sapi.ini_entries = self._ini_entries.as_ptr() as *mut c_char;
+
             sapi.additional_functions = ptr::null();
 
             tracing::debug!("SAPI module configured: name={:?}", CStr::from_ptr(sapi.name));
+            tracing::debug!("PHP INI entries configured for embedded SAPI");
 
             // Call PHP module startup
             tracing::debug!("Calling php_module_startup()...");
