@@ -359,7 +359,7 @@ impl PhpFfi {
     /// Initialize PHP embed SAPI
     pub fn module_startup(&self) -> Result<()> {
         unsafe {
-            // Configure SAPI module before php_embed_init
+            // Configure SAPI module BEFORE php_embed_init
             if self.sapi_module.is_null() {
                 return Err(anyhow::anyhow!(
                     "SAPI module pointer is null - PHP library may not be properly loaded"
@@ -368,13 +368,7 @@ impl PhpFfi {
 
             let sapi = &mut *self.sapi_module;
 
-            // Set custom callbacks for output handling
-            sapi.ub_write = Some(php_output_handler);
-            sapi.flush = Some(php_flush);
-            sapi.send_headers = Some(php_send_headers);
-            sapi.log_message = Some(php_log_message);
-
-            // Set INI entries
+            // Set INI entries before init
             sapi.ini_entries = self._ini_entries.as_ptr() as *mut c_char;
 
             tracing::info!("Calling php_embed_init()...");
@@ -389,6 +383,17 @@ impl PhpFfi {
             }
 
             tracing::info!("php_embed_init() completed successfully");
+
+            // CRITICAL: Override callbacks AFTER php_embed_init
+            // php_embed_init sets its own ub_write that goes to stdout
+            // We need to replace it with our custom handler
+            let sapi = &mut *self.sapi_module;
+            sapi.ub_write = Some(php_output_handler);
+            sapi.flush = Some(php_flush);
+            sapi.send_headers = Some(php_send_headers);
+            sapi.log_message = Some(php_log_message);
+
+            tracing::info!("SAPI callbacks overridden for output buffering");
         }
 
         Ok(())
