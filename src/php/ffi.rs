@@ -209,15 +209,14 @@ extern "C" fn php_send_headers(_sapi_headers: *mut c_void) -> c_int {
 pub struct PhpFfi {
     _library: Library,  // Keep library loaded for the lifetime of PhpFfi
     // Function pointers
-    php_module_startup: Symbol<'static, unsafe extern "C" fn(*mut SapiModule, *mut c_void) -> c_int>,
-    php_module_shutdown: Symbol<'static, unsafe extern "C" fn() -> c_int>,
+    php_embed_init: Symbol<'static, unsafe extern "C" fn(c_int, *mut *mut c_char) -> c_int>,
+    php_embed_shutdown: Symbol<'static, unsafe extern "C" fn() -> c_void>,
     php_request_startup: Symbol<'static, unsafe extern "C" fn() -> c_int>,
     php_request_shutdown: Symbol<'static, unsafe extern "C" fn(*mut c_void) -> c_void>,
     php_execute_script: Symbol<'static, unsafe extern "C" fn(*mut ZendFileHandle) -> c_int>,
     zend_stream_init_filename: Symbol<'static, unsafe extern "C" fn(*mut ZendFileHandle, *const c_char)>,
     zend_destroy_file_handle: Symbol<'static, unsafe extern "C" fn(*mut ZendFileHandle)>,
     sapi_module: *mut SapiModule,
-    sapi_globals: *mut SapiGlobalsStruct,
     // Keep CStrings alive for the lifetime of PhpFfi
     _sapi_name: Box<CString>,
     _sapi_pretty_name: Box<CString>,
@@ -263,18 +262,18 @@ impl PhpFfi {
             }
         };
 
-        // Load function symbols
-        let php_module_startup = unsafe {
-            let symbol: Symbol<unsafe extern "C" fn(*mut SapiModule, *mut c_void) -> c_int> =
-                library.get(b"php_module_startup\0")
-                    .context("Failed to load php_module_startup")?;
+        // Load function symbols - use embed SAPI functions
+        let php_embed_init = unsafe {
+            let symbol: Symbol<unsafe extern "C" fn(c_int, *mut *mut c_char) -> c_int> =
+                library.get(b"php_embed_init\0")
+                    .context("Failed to load php_embed_init")?;
             std::mem::transmute(symbol)
         };
 
-        let php_module_shutdown = unsafe {
-            let symbol: Symbol<unsafe extern "C" fn() -> c_int> =
-                library.get(b"php_module_shutdown\0")
-                    .context("Failed to load php_module_shutdown")?;
+        let php_embed_shutdown = unsafe {
+            let symbol: Symbol<unsafe extern "C" fn() -> c_void> =
+                library.get(b"php_embed_shutdown\0")
+                    .context("Failed to load php_embed_shutdown")?;
             std::mem::transmute(symbol)
         };
 
@@ -315,17 +314,10 @@ impl PhpFfi {
             std::mem::transmute(symbol)
         };
 
-        // Get SAPI module pointer
+        // Get SAPI module pointer (for configuration)
         let sapi_module: *mut SapiModule = unsafe {
             let symbol: Symbol<*mut SapiModule> = library.get(b"sapi_module\0")
                 .context("Failed to load sapi_module")?;
-            *symbol
-        };
-
-        // Get SAPI globals pointer
-        let sapi_globals: *mut SapiGlobalsStruct = unsafe {
-            let symbol: Symbol<*mut SapiGlobalsStruct> = library.get(b"sapi_globals\0")
-                .context("Failed to load sapi_globals")?;
             *symbol
         };
 
@@ -350,25 +342,24 @@ impl PhpFfi {
 
         Ok(Self {
             _library: library,
-            php_module_startup,
-            php_module_shutdown,
+            php_embed_init,
+            php_embed_shutdown,
             php_request_startup,
             php_request_shutdown,
             php_execute_script,
             zend_stream_init_filename,
             zend_destroy_file_handle,
             sapi_module,
-            sapi_globals,
             _sapi_name: sapi_name,
             _sapi_pretty_name: sapi_pretty_name,
             _ini_entries: ini_entries,
         })
     }
 
-    /// Initialize PHP module
+    /// Initialize PHP embed SAPI
     pub fn module_startup(&self) -> Result<()> {
         unsafe {
-            // Configure SAPI module
+            // Configure SAPI module before php_embed_init
             if self.sapi_module.is_null() {
                 return Err(anyhow::anyhow!(
                     "SAPI module pointer is null - PHP library may not be properly loaded"
@@ -377,64 +368,39 @@ impl PhpFfi {
 
             let sapi = &mut *self.sapi_module;
 
-            // Set SAPI name (using the boxed CStrings that live for PhpFfi's lifetime)
-            sapi.name = self._sapi_name.as_ptr();
-            sapi.pretty_name = self._sapi_pretty_name.as_ptr();
-
-            // Set required callbacks
-            // Note: activate is set to None (like FrankenPHP) - not needed for embedded SAPI
-            sapi.activate = None;
-            sapi.deactivate = Some(php_sapi_deactivate);
+            // Set custom callbacks for output handling
             sapi.ub_write = Some(php_output_handler);
             sapi.flush = Some(php_flush);
             sapi.send_headers = Some(php_send_headers);
-            sapi.register_server_variables = Some(php_register_variables);
-            sapi.read_post = Some(php_read_post);
-            sapi.read_cookies = Some(php_read_cookies);
             sapi.log_message = Some(php_log_message);
 
-            // Set additional fields to safe defaults
-            sapi.php_ini_path_override = ptr::null_mut();
-            sapi.executable_location = ptr::null_mut();
-            sapi.php_ini_ignore = 0;
-            sapi.php_ini_ignore_cwd = 0;
-            sapi.phpinfo_as_text = 0;
-            // Set INI entries to enable error display
+            // Set INI entries
             sapi.ini_entries = self._ini_entries.as_ptr() as *mut c_char;
-            sapi.additional_functions = ptr::null();
 
-            tracing::debug!("SAPI module configured: name={:?}", CStr::from_ptr(sapi.name));
+            tracing::info!("Calling php_embed_init()...");
 
-            // Call PHP module startup
-            tracing::debug!("Calling php_module_startup()...");
-            let result = (self.php_module_startup)(self.sapi_module, ptr::null_mut());
+            // php_embed_init(argc, argv) - pass 0, NULL since we don't use CLI args
+            let result = (self.php_embed_init)(0, ptr::null_mut());
             if result != 0 {
                 return Err(anyhow::anyhow!(
-                    "php_module_startup failed with code {} - check PHP error log for details",
+                    "php_embed_init failed with code {} - check PHP installation",
                     result
                 ));
             }
 
-            tracing::debug!("php_module_startup() completed successfully");
+            tracing::info!("php_embed_init() completed successfully");
         }
 
         Ok(())
     }
 
-    /// Shutdown PHP module
+    /// Shutdown PHP embed SAPI
     pub fn module_shutdown(&self) -> Result<()> {
-        tracing::debug!("Initiating PHP module shutdown...");
+        tracing::info!("Calling php_embed_shutdown()...");
         unsafe {
-            let result = (self.php_module_shutdown)();
-            if result != 0 {
-                tracing::error!("php_module_shutdown failed with code {}", result);
-                return Err(anyhow::anyhow!(
-                    "php_module_shutdown failed with code {} - PHP may not shut down cleanly",
-                    result
-                ));
-            }
+            (self.php_embed_shutdown)();
         }
-        tracing::debug!("PHP module shutdown completed successfully");
+        tracing::info!("PHP embed shutdown completed");
         Ok(())
     }
 
