@@ -191,6 +191,7 @@ pub struct PhpFfi {
     // Keep CStrings alive for the lifetime of PhpFfi
     _sapi_name: Box<CString>,
     _sapi_pretty_name: Box<CString>,
+    _ini_entries: Box<CString>,
 }
 
 impl PhpFfi {
@@ -295,6 +296,15 @@ impl PhpFfi {
         let sapi_name = Box::new(CString::new("fe-php").unwrap());
         let sapi_pretty_name = Box::new(CString::new("fe-php embedded").unwrap());
 
+        // Create INI entries string to enable error display for debugging
+        // This helps us see PHP errors during script execution
+        let ini_entries = Box::new(CString::new(
+            "display_errors=1\n\
+             display_startup_errors=1\n\
+             error_reporting=32767\n\
+             log_errors=1\n"
+        ).unwrap());
+
         Ok(Self {
             _library: library,
             php_module_startup,
@@ -307,6 +317,7 @@ impl PhpFfi {
             sapi_module,
             _sapi_name: sapi_name,
             _sapi_pretty_name: sapi_pretty_name,
+            _ini_entries: ini_entries,
         })
     }
 
@@ -344,7 +355,8 @@ impl PhpFfi {
             sapi.php_ini_ignore = 0;
             sapi.php_ini_ignore_cwd = 0;
             sapi.phpinfo_as_text = 0;
-            sapi.ini_entries = ptr::null_mut();
+            // Set INI entries to enable error display
+            sapi.ini_entries = self._ini_entries.as_ptr() as *mut c_char;
             sapi.additional_functions = ptr::null();
 
             tracing::debug!("SAPI module configured: name={:?}", CStr::from_ptr(sapi.name));
