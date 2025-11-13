@@ -13,8 +13,8 @@ workers = 1
 # FreeBSD: /usr/local/lib/libphp.so
 # Debian/Ubuntu: /usr/lib/libphp.so or /usr/lib/x86_64-linux-gnu/libphp.so
 # From source: /usr/local/lib/libphp.so
-# macOS: /opt/homebrew/lib/libphp.dylib
-libphp_path = "/usr/local/lib/libphp.so"
+# macOS: /usr/local/php/lib/libphp.dylib
+libphp_path = "/usr/local/php-zts-embed/lib/libphp.dylib"
 
 # Document root for PHP files
 document_root = "/var/www/html"

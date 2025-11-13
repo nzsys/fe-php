@@ -117,7 +117,7 @@ impl Server {
         let load_balancer = if config.load_balancing.enable {
             let lb = LoadBalancingManager::new(
                 config.load_balancing.upstreams.clone(),
-                &config.load_balancing.algorithm,
+                config.load_balancing.algorithm,
                 &config.load_balancing.circuit_breaker,
             ).context("Failed to initialize load balancing")?;
 

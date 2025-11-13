@@ -92,18 +92,14 @@ impl LoadBalancingManager {
     /// Create a new load balancing manager
     pub fn new(
         upstreams: Vec<crate::config::UpstreamConfig>,
-        algorithm: &str,
+        algorithm: crate::config::LoadBalancingAlgorithm,
         circuit_breaker_config: &crate::config::CircuitBreakerConfig,
     ) -> Result<Self> {
         let algorithm = match algorithm {
-            "round_robin" => LoadBalancingAlgorithm::RoundRobin,
-            "weighted_round_robin" => LoadBalancingAlgorithm::WeightedRoundRobin,
-            "least_connections" => LoadBalancingAlgorithm::LeastConnections,
-            "random" => LoadBalancingAlgorithm::Random,
-            _ => {
-                warn!("Unknown load balancing algorithm '{}', using round_robin", algorithm);
-                LoadBalancingAlgorithm::RoundRobin
-            }
+            crate::config::LoadBalancingAlgorithm::RoundRobin => LoadBalancingAlgorithm::RoundRobin,
+            crate::config::LoadBalancingAlgorithm::WeightedRoundRobin => LoadBalancingAlgorithm::WeightedRoundRobin,
+            crate::config::LoadBalancingAlgorithm::LeastConn => LoadBalancingAlgorithm::LeastConnections,
+            crate::config::LoadBalancingAlgorithm::IpHash => LoadBalancingAlgorithm::Random, // Fallback to random for IpHash
         };
 
         let upstream_servers = upstreams

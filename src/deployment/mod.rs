@@ -11,7 +11,7 @@ pub use traffic_splitter::TrafficSplitter;
 pub use ab_test::AbTestManager;
 pub use canary::CanaryDeploymentManager;
 
-use crate::config::DeploymentConfig;
+use crate::config::{DeploymentConfig, DeploymentStrategy};
 
 /// Unified deployment manager that handles both A/B testing and canary deployments
 pub struct DeploymentManager {
@@ -28,7 +28,7 @@ impl DeploymentManager {
             config.sticky_sessions,
         )?);
 
-        let ab_test = if config.strategy == "ab_test" {
+        let ab_test = if config.strategy == DeploymentStrategy::AbTest {
             let manager = AbTestManager::new(
                 config.variants.clone(),
                 config.ab_test.clone(),
@@ -39,7 +39,7 @@ impl DeploymentManager {
             None
         };
 
-        let canary = if config.strategy == "canary" {
+        let canary = if config.strategy == DeploymentStrategy::Canary {
             let manager = CanaryDeploymentManager::new(
                 config.variants.clone(),
                 config.canary.clone(),

@@ -83,6 +83,22 @@ impl PhpExecutor {
         self.ffi.clone()
     }
 
+    /// Initialize TSRM thread-local resources for the current worker thread (ZTS only)
+    /// This MUST be called once by each worker thread before processing requests
+    pub fn thread_init(&self) {
+        if let Some(ffi) = &self.ffi {
+            ffi.thread_init();
+        }
+    }
+
+    /// Free TSRM thread-local resources for the current worker thread (ZTS only)
+    /// This MUST be called when a worker thread exits
+    pub fn thread_cleanup(&self) {
+        if let Some(ffi) = &self.ffi {
+            ffi.thread_cleanup();
+        }
+    }
+
     pub fn execute(&self, request: PhpRequest) -> Result<PhpResponse> {
         let start = std::time::Instant::now();
 
@@ -91,13 +107,15 @@ impl PhpExecutor {
 
         if self.use_fpm {
             // Execute via PHP-FPM
-            let fastcgi = self.fastcgi.as_ref().unwrap();
+            let fastcgi = self.fastcgi.as_ref()
+                .ok_or_else(|| anyhow::anyhow!("FastCGI client not initialized"))?;
 
             // Use tokio's block_in_place to run async code in blocking context
             let (stdout, stderr) = tokio::task::block_in_place(|| {
                 tokio::runtime::Handle::current().block_on(
                     fastcgi.execute(
-                        script_path.to_str().unwrap(),
+                        script_path.to_str()
+                            .ok_or_else(|| anyhow::anyhow!("Script path contains invalid UTF-8"))?,
                         &request.method,
                         &request.uri,
                         &request.query_string,
@@ -122,14 +140,17 @@ impl PhpExecutor {
             })
         } else {
             // Execute via embedded libphp (high performance mode)
-            let ffi = self.ffi.as_ref().unwrap();
+            let ffi = self.ffi.as_ref()
+                .ok_or_else(|| anyhow::anyhow!("PHP FFI not initialized"))?;
 
             // Start request
             ffi.request_startup()
                 .context("Failed to start PHP request")?;
 
             // Execute script
-            let output = match ffi.execute_script(script_path.to_str().unwrap()) {
+            let script_path_str = script_path.to_str()
+                .ok_or_else(|| anyhow::anyhow!("Script path contains invalid UTF-8"))?;
+            let output = match ffi.execute_script(script_path_str) {
                 Ok(out) => out,
                 Err(e) => {
                     ffi.request_shutdown();
@@ -207,7 +228,10 @@ impl PhpExecutor {
                 if name.eq_ignore_ascii_case("Status") {
                     // Parse status code from "Status: 200 OK"
                     if let Some(code_str) = value.split_whitespace().next() {
-                        status_code = code_str.parse().unwrap_or(200);
+                        status_code = code_str.parse().unwrap_or_else(|e| {
+                            tracing::warn!("Failed to parse status code '{}': {}, defaulting to 200", code_str, e);
+                            200
+                        });
                     }
                 } else if !name.is_empty() {
                     headers.insert(name.to_string(), value.to_string());
@@ -254,9 +278,19 @@ impl PhpExecutor {
         let script_path = self.document_root.join(path);
 
         // Security: ensure path is within document root
-        let canonical = script_path.canonicalize().unwrap_or(script_path.clone());
+        // canonicalize() must succeed to prevent path traversal attacks
+        let canonical = script_path.canonicalize()
+            .with_context(|| format!(
+                "Failed to canonicalize script path '{}' - file may not exist or insufficient permissions",
+                script_path.display()
+            ))?;
+
         if !canonical.starts_with(&self.document_root) {
-            return Err(anyhow::anyhow!("Path traversal attempt detected"));
+            return Err(anyhow::anyhow!(
+                "Path traversal attempt detected: '{}' is outside document root '{}'",
+                canonical.display(),
+                self.document_root.display()
+            ));
         }
 
         if !canonical.exists() {
@@ -289,6 +323,8 @@ mod tests {
             document_root: PathBuf::from("/var/www/html"),
             worker_pool_size: 4,
             worker_max_requests: 1000,
+            use_fpm: false,
+            fpm_socket: String::from("127.0.0.1:9000"),
         };
 
         // Note: This test would fail because PhpExecutor::new requires actual libphp.so
