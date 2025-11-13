@@ -9,13 +9,18 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use tracing::{info, error};
 
-pub async fn handle_request(
-    req: Request<Incoming>,
+pub async fn handle_request<B>(
+    req: Request<B>,
     remote_addr: SocketAddr,
     worker_pool: Arc<WorkerPool>,
     metrics: Arc<MetricsCollector>,
     config: Arc<Config>,
-) -> Result<Response<String>> {
+) -> Result<Response<String>>
+where
+    B: hyper::body::Body + Send + 'static,
+    B::Data: Send,
+    B::Error: Into<Box<dyn std::error::Error + Send + Sync>> + std::fmt::Display,
+{
     let start = std::time::Instant::now();
     let method = req.method().to_string();
     let uri = req.uri().to_string();
