@@ -27,6 +27,10 @@ pub async fn run(args: ServeArgs) -> Result<()> {
 
     crate::metrics::init_metrics();
 
+    // Create server first to get metrics collector
+    let server = Server::new(config.clone()).await?;
+    let metrics_collector = server.metrics_collector();
+
     if config.metrics.enable {
         let metrics_port = config.metrics.port;
         let metrics_endpoint = config.metrics.endpoint.clone();
@@ -41,15 +45,15 @@ pub async fn run(args: ServeArgs) -> Result<()> {
     if config.admin.enable {
         let admin_host = config.admin.host.clone();
         let admin_port = config.admin.http_port;
+        let metrics_for_admin = metrics_collector.clone();
         tokio::spawn(async move {
-            if let Err(e) = crate::admin::start_admin_server(admin_host.clone(), admin_port).await {
+            if let Err(e) = crate::admin::start_admin_server(admin_host.clone(), admin_port, metrics_for_admin).await {
                 tracing::error!("Admin server error: {}", e);
             }
         });
         info!("Admin interface available at http://{}:{}", config.admin.host, config.admin.http_port);
     }
 
-    let server = Server::new(config).await?;
     info!("Server starting...");
 
     server.serve().await?;

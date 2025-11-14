@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>System - fe-php Admin Console</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #f5f5f5; color: #333; line-height: 1.6; }
+        .container { max-width: 1400px; margin: 0 auto; padding: 20px; }
+        header { background: #2c3e50; color: white; padding: 20px 0; margin-bottom: 30px; }
+        header h1 { font-size: 28px; font-weight: 600; }
+        .nav { background: white; padding: 15px; border-radius: 8px; margin-bottom: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+        .nav a { text-decoration: none; color: #3498db; margin-right: 20px; font-weight: 500; }
+        .nav a:hover { color: #2980b9; }
+        .nav a.active { color: #2c3e50; font-weight: 600; }
+        .card { background: white; border-radius: 8px; padding: 20px; margin-bottom: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+        .card h2 { font-size: 20px; margin-bottom: 15px; color: #2c3e50; border-bottom: 2px solid #9b59b6; padding-bottom: 10px; }
+        .system-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 20px; }
+        .system-metric { background: #f8f9fa; padding: 20px; border-radius: 6px; border-left: 4px solid #9b59b6; }
+        .metric-label { font-size: 14px; color: #7f8c8d; margin-bottom: 8px; font-weight: 500; }
+        .metric-value { font-size: 32px; font-weight: 600; color: #2c3e50; margin-bottom: 5px; }
+        .metric-unit { font-size: 14px; color: #95a5a6; }
+        .metric-subtext { font-size: 13px; color: #7f8c8d; margin-top: 5px; }
+        .progress-bar { width: 100%; height: 8px; background: #ecf0f1; border-radius: 4px; overflow: hidden; margin-top: 10px; }
+        .progress-fill { height: 100%; background: linear-gradient(90deg, #9b59b6, #8e44ad); transition: width 0.3s ease; }
+        .cpu-cores { display: grid; grid-template-columns: repeat(auto-fill, minmax(60px, 1fr)); gap: 10px; margin-top: 15px; }
+        .cpu-core { background: #ecf0f1; padding: 10px; border-radius: 4px; text-align: center; font-size: 12px; }
+        .cpu-core-label { color: #7f8c8d; margin-bottom: 5px; }
+        .cpu-core-value { font-weight: 600; color: #2c3e50; font-size: 16px; }
+        footer { text-align: center; padding: 20px; color: #95a5a6; font-size: 14px; }
+    </style>
+</head>
+<body>
+    <header>
+        <div class="container">
+            <h1>fe-php Admin Console - System Information</h1>
+        </div>
+    </header>
+
+    <div class="container">
+        <div class="nav">
+            <a href="/">Dashboard</a>
+            <a href="/metrics">Metrics</a>
+            <a href="/logs">Logs</a>
+            <a href="/waf">WAF</a>
+            <a href="/backends">Backends</a>
+            <a href="/system" class="active">System</a>
+            <a href="/api/status" style="float: right;">JSON API</a>
+        </div>
+
+        <div class="card">
+            <h2>💻 CPU使用率</h2>
+            <div class="system-grid">
+                <div class="system-metric">
+                    <div class="metric-label">Total CPU Usage</div>
+                    <div class="metric-value" id="cpuUsage">0.0<span class="metric-unit">%</span></div>
+                    <div class="progress-bar">
+                        <div class="progress-fill" id="cpuProgress" style="width: 0%;"></div>
+                    </div>
+                </div>
+                <div class="system-metric">
+                    <div class="metric-label">CPU Cores</div>
+                    <div class="metric-value" id="cpuCores">0</div>
+                    <div class="metric-subtext">Physical & Logical</div>
+                </div>
+            </div>
+            <div class="cpu-cores" id="cpuCoresList"></div>
+        </div>
+
+        <div class="card">
+            <h2>🧠 メモリ使用状況</h2>
+            <div class="system-grid">
+                <div class="system-metric">
+                    <div class="metric-label">Total Memory</div>
+                    <div class="metric-value" id="memTotal">0<span class="metric-unit">GB</span></div>
+                </div>
+                <div class="system-metric">
+                    <div class="metric-label">Used Memory</div>
+                    <div class="metric-value" id="memUsed">0<span class="metric-unit">GB</span></div>
+                    <div class="progress-bar">
+                        <div class="progress-fill" id="memProgress" style="width: 0%;"></div>
+                    </div>
+                </div>
+                <div class="system-metric">
+                    <div class="metric-label">Memory Usage</div>
+                    <div class="metric-value" id="memPercent">0.0<span class="metric-unit">%</span></div>
+                    <div class="metric-subtext" id="memAvailable">0 GB available</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="card">
+            <h2>⚙️ システム情報</h2>
+            <div class="system-grid">
+                <div class="system-metric">
+                    <div class="metric-label">OS Name</div>
+                    <div class="metric-value" style="font-size: 20px;" id="osName">-</div>
+                </div>
+                <div class="system-metric">
+                    <div class="metric-label">OS Version</div>
+                    <div class="metric-value" style="font-size: 20px;" id="osVersion">-</div>
+                </div>
+                <div class="system-metric">
+                    <div class="metric-label">Kernel Version</div>
+                    <div class="metric-value" style="font-size: 20px;" id="kernelVersion">-</div>
+                </div>
+                <div class="system-metric">
+                    <div class="metric-label">Hostname</div>
+                    <div class="metric-value" style="font-size: 20px;" id="hostname">-</div>
+                </div>
+                <div class="system-metric">
+                    <div class="metric-label">Process Count</div>
+                    <div class="metric-value" id="processCount">0</div>
+                </div>
+                <div class="system-metric">
+                    <div class="metric-label">System Uptime</div>
+                    <div class="metric-value" style="font-size: 22px;" id="uptime">-</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="card">
+            <h2>📊 fe-php Process</h2>
+            <div class="system-grid">
+                <div class="system-metric">
+                    <div class="metric-label">Process Memory</div>
+                    <div class="metric-value" id="processMemory">0<span class="metric-unit">MB</span></div>
+                </div>
+                <div class="system-metric">
+                    <div class="metric-label">Process CPU</div>
+                    <div class="metric-value" id="processCpu">0.0<span class="metric-unit">%</span></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <footer>
+        fe-php Admin Console - リアルタイム更新 (3秒間隔)
+    </footer>
+
+    <script>
+        function formatBytes(bytes) {
+            return (bytes / (1024 * 1024 * 1024)).toFixed(2);
+        }
+
+        function formatUptime(seconds) {
+            const days = Math.floor(seconds / 86400);
+            const hours = Math.floor((seconds % 86400) / 3600);
+            const mins = Math.floor((seconds % 3600) / 60);
+
+            if (days > 0) {
+                return `${days}d ${hours}h ${mins}m`;
+            } else if (hours > 0) {
+                return `${hours}h ${mins}m`;
+            } else {
+                return `${mins}m`;
+            }
+        }
+
+        async function updateSystem() {
+            try {
+                const response = await fetch('/api/system');
+                const data = await response.json();
+
+                // CPU
+                const cpuUsage = data.cpu_usage || 0;
+                document.getElementById('cpuUsage').innerHTML = `${cpuUsage.toFixed(1)}<span class="metric-unit">%</span>`;
+                document.getElementById('cpuProgress').style.width = `${cpuUsage}%`;
+                document.getElementById('cpuCores').textContent = data.cpu_count || 0;
+
+                // CPU Cores
+                const coresContainer = document.getElementById('cpuCoresList');
+                if (data.cpu_cores && data.cpu_cores.length > 0) {
+                    coresContainer.innerHTML = data.cpu_cores.map((usage, index) => `
+                        <div class="cpu-core">
+                            <div class="cpu-core-label">Core ${index}</div>
+                            <div class="cpu-core-value">${usage.toFixed(1)}%</div>
+                        </div>
+                    `).join('');
+                }
+
+                // Memory
+                const totalMem = formatBytes(data.total_memory || 0);
+                const usedMem = formatBytes(data.used_memory || 0);
+                const availableMem = formatBytes((data.total_memory || 0) - (data.used_memory || 0));
+                const memPercent = data.total_memory > 0 ? ((data.used_memory / data.total_memory) * 100) : 0;
+
+                document.getElementById('memTotal').innerHTML = `${totalMem}<span class="metric-unit">GB</span>`;
+                document.getElementById('memUsed').innerHTML = `${usedMem}<span class="metric-unit">GB</span>`;
+                document.getElementById('memPercent').innerHTML = `${memPercent.toFixed(1)}<span class="metric-unit">%</span>`;
+                document.getElementById('memAvailable').textContent = `${availableMem} GB available`;
+                document.getElementById('memProgress').style.width = `${memPercent}%`;
+
+                // System Info
+                document.getElementById('osName').textContent = data.os_name || '-';
+                document.getElementById('osVersion').textContent = data.os_version || '-';
+                document.getElementById('kernelVersion').textContent = data.kernel_version || '-';
+                document.getElementById('hostname').textContent = data.hostname || '-';
+                document.getElementById('processCount').textContent = data.process_count || 0;
+                document.getElementById('uptime').textContent = formatUptime(data.uptime || 0);
+
+                // Process
+                const processMem = (data.process_memory || 0) / (1024 * 1024);
+                document.getElementById('processMemory').innerHTML = `${processMem.toFixed(0)}<span class="metric-unit">MB</span>`;
+                document.getElementById('processCpu').innerHTML = `${(data.process_cpu || 0).toFixed(1)}<span class="metric-unit">%</span>`;
+
+            } catch (error) {
+                console.error('Failed to fetch system data:', error);
+            }
+        }
+
+        updateSystem();
+        setInterval(updateSystem, 3000);
+    </script>
+</body>
+</html>

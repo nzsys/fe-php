@@ -1,17 +1,17 @@
 use crate::config::Config;
 use crate::php::{WorkerPool, PhpRequest};
 use crate::metrics::MetricsCollector;
+use crate::server::peer_addr::PeerAddr;
 use anyhow::Result;
 use hyper::{Request, Response, StatusCode};
 use http_body_util::BodyExt;
 use std::collections::HashMap;
-use std::net::SocketAddr;
 use std::sync::Arc;
 use tracing::{info, error};
 
 pub async fn handle_request<B>(
     req: Request<B>,
-    remote_addr: SocketAddr,
+    peer_addr: PeerAddr,
     worker_pool: Arc<WorkerPool>,
     metrics: Arc<MetricsCollector>,
     config: Arc<Config>,
@@ -65,7 +65,7 @@ where
         headers,
         body: body_bytes,
         query_string,
-        remote_addr: remote_addr.to_string(),
+        remote_addr: peer_addr.to_string(),
     };
 
     // Execute PHP

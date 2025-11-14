@@ -8,8 +8,11 @@ pub mod cors;
 pub mod compression;
 pub mod range;
 pub mod config_reload;
+pub mod peer_addr;
 
-use crate::config::Config;
+use peer_addr::PeerAddr;
+
+use crate::config::{Config, ListenType};
 use crate::php::{WorkerPool, WorkerPoolConfig, PhpConfig};
 use crate::metrics::MetricsCollector;
 use crate::tls::TlsManager;
@@ -25,7 +28,7 @@ use hyper::{Request, Response, body::Incoming};
 use hyper_util::rt::TokioIo;
 use std::net::{SocketAddr, ToSocketAddrs};
 use std::sync::Arc;
-use tokio::net::TcpListener;
+use tokio::net::{TcpListener, UnixListener};
 use tokio_rustls::TlsAcceptor;
 use tracing::{info, error, warn, debug};
 
@@ -262,7 +265,19 @@ impl Server {
         })
     }
 
+    /// Get a reference to the metrics collector
+    pub fn metrics_collector(&self) -> Arc<MetricsCollector> {
+        Arc::clone(&self.metrics)
+    }
+
     pub async fn serve(self) -> Result<()> {
+        match self.config.server.listen_type {
+            ListenType::Tcp => self.serve_tcp().await,
+            ListenType::Unix => self.serve_unix().await,
+        }
+    }
+
+    async fn serve_tcp(self) -> Result<()> {
         let addr_str = format!("{}:{}", self.config.server.host, self.config.server.port);
 
         // Resolve hostname to socket address (supports both IP addresses and hostnames like "localhost")
@@ -316,9 +331,11 @@ impl Server {
                 result = listener.accept() => {
                     match result {
                         Ok((stream, remote_addr)) => {
+                            let peer_addr = PeerAddr::from_tcp(remote_addr);
+
                             // Check if shutdown has been initiated
                             if server.shutdown_coordinator.is_shutting_down() {
-                                debug!("Rejecting new connection during shutdown from {}", remote_addr);
+                                debug!("Rejecting new connection during shutdown from {}", peer_addr);
                                 continue;
                             }
 
@@ -331,17 +348,19 @@ impl Server {
                             tokio::spawn(async move {
                                 // Check GeoIP filtering
                                 if let Some(ref geoip) = server.geoip_manager {
-                                    match geoip.is_allowed(remote_addr.ip()) {
-                                        Ok(false) => {
-                                            debug!("Blocked connection from {} due to GeoIP rules", remote_addr);
-                                            server.shutdown_coordinator.dec_connections();
-                                            return;
+                                    if let Some(ip) = peer_addr.ip() {
+                                        match geoip.is_allowed(ip) {
+                                            Ok(false) => {
+                                                debug!("Blocked connection from {} due to GeoIP rules", peer_addr);
+                                                server.shutdown_coordinator.dec_connections();
+                                                return;
+                                            }
+                                            Err(e) => {
+                                                warn!("GeoIP check error for {}: {}", peer_addr, e);
+                                                // Continue on error to avoid blocking legitimate traffic
+                                            }
+                                            Ok(true) => {}
                                         }
-                                        Err(e) => {
-                                            warn!("GeoIP check error for {}: {}", remote_addr, e);
-                                            // Continue on error to avoid blocking legitimate traffic
-                                        }
-                                        Ok(true) => {}
                                     }
                                 }
 
@@ -350,15 +369,15 @@ impl Server {
                                     match acceptor.accept(stream).await {
                                         Ok(tls_stream) => {
                                             let io = TokioIo::new(tls_stream);
-                                            server.serve_connection(io, remote_addr).await;
+                                            server.serve_connection(io, peer_addr).await;
                                         }
                                         Err(e) => {
-                                            error!("TLS handshake failed for {}: {}", remote_addr, e);
+                                            error!("TLS handshake failed for {}: {}", peer_addr, e);
                                         }
                                     }
                                 } else {
                                     let io = TokioIo::new(stream);
-                                    server.serve_connection(io, remote_addr).await;
+                                    server.serve_connection(io, peer_addr).await;
                                 }
 
                                 // Decrement connection counter when done
@@ -384,16 +403,98 @@ impl Server {
         Ok(())
     }
 
-    async fn serve_connection<I>(&self, io: I, remote_addr: SocketAddr)
+    async fn serve_unix(self) -> Result<()> {
+        let socket_path = self.config.server.unix_socket_path.as_ref()
+            .context("Unix socket path not specified in configuration")?
+            .clone();
+
+        // Remove existing socket file if it exists
+        if socket_path.exists() {
+            std::fs::remove_file(&socket_path)
+                .with_context(|| format!("Failed to remove existing socket file: {:?}", socket_path))?;
+        }
+
+        let listener = UnixListener::bind(&socket_path)
+            .with_context(|| format!("Failed to bind to Unix socket: {:?}", socket_path))?;
+
+        info!("Server listening on unix://{}", socket_path.display());
+
+        let socket_path_str = socket_path.display().to_string();
+
+        if self.config.server.enable_http2 {
+            info!("HTTP/2 support enabled");
+        }
+
+        let server = Arc::new(self);
+
+        // Spawn signal handler for graceful shutdown
+        let shutdown_handle = tokio::spawn(shutdown::setup_signal_handler(
+            Arc::clone(&server.shutdown_coordinator)
+        ));
+
+        // Get shutdown receiver
+        let mut shutdown_rx = server.shutdown_coordinator.subscribe();
+
+        loop {
+            tokio::select! {
+                result = listener.accept() => {
+                    match result {
+                        Ok((stream, _)) => {
+                            let peer_addr = PeerAddr::from_unix(&socket_path_str);
+
+                            // Check if shutdown has been initiated
+                            if server.shutdown_coordinator.is_shutting_down() {
+                                debug!("Rejecting new connection during shutdown from {}", peer_addr);
+                                continue;
+                            }
+
+                            let server = Arc::clone(&server);
+
+                            // Track connection
+                            server.shutdown_coordinator.inc_connections();
+
+                            tokio::spawn(async move {
+                                let io = TokioIo::new(stream);
+                                server.serve_connection(io, peer_addr).await;
+
+                                // Decrement connection counter when done
+                                server.shutdown_coordinator.dec_connections();
+                            });
+                        }
+                        Err(e) => {
+                            error!("Failed to accept connection: {}", e);
+                        }
+                    }
+                }
+
+                _ = shutdown_rx.recv() => {
+                    info!("Shutdown signal received, stopping listener");
+                    break;
+                }
+            }
+        }
+
+        // Wait for signal handler to complete
+        let _ = shutdown_handle.await;
+
+        // Clean up socket file
+        let _ = std::fs::remove_file(&socket_path);
+
+        Ok(())
+    }
+
+    async fn serve_connection<I>(&self, io: I, peer_addr: PeerAddr)
     where
         I: hyper::rt::Read + hyper::rt::Write + Unpin + Send + 'static,
     {
         let server = Arc::new(self.clone());
+        let peer_addr_clone = peer_addr.clone();
 
         let service = service_fn(move |req: Request<Incoming>| {
             let server = Arc::clone(&server);
+            let peer_addr = peer_addr_clone.clone();
             async move {
-                server.handle_request(req, remote_addr).await
+                server.handle_request(req, peer_addr).await
             }
         });
 
@@ -418,11 +519,11 @@ impl Server {
     async fn handle_request(
         &self,
         req: Request<Incoming>,
-        remote_addr: SocketAddr,
+        peer_addr: PeerAddr,
     ) -> Result<Response<String>> {
         // Check WAF if enabled
         if let Some(ref waf) = self.waf_engine {
-            
+
             use http_body_util::BodyExt;
 
             // Decompose request first
@@ -449,7 +550,7 @@ impl Server {
             // Check request against WAF rules
             match waf.check_request(method, &uri, query_string, &headers_map, &body_bytes) {
                 crate::waf::WafResult::Block(rule) => {
-                    warn!("WAF blocked request from {}: rule {} - {}", remote_addr, rule.id, rule.description);
+                    warn!("WAF blocked request from {}: rule {} - {}", peer_addr, rule.id, rule.description);
                     return Ok(Response::builder()
                         .status(403)
                         .body("Forbidden: Request blocked by WAF".to_string())
@@ -461,12 +562,12 @@ impl Server {
 
                     // Use hybrid backend router if enabled
                     if let Some(ref backend_router) = self.backend_router {
-                        return self.handle_with_backend_router(req, remote_addr, backend_router).await;
+                        return self.handle_with_backend_router(req, peer_addr, backend_router).await;
                     }
 
                     return router::handle_request(
                         req,
-                        remote_addr,
+                        peer_addr,
                         Arc::clone(&self.worker_pool),
                         Arc::clone(&self.metrics),
                         Arc::clone(&self.config),
@@ -478,12 +579,12 @@ impl Server {
 
         // Use hybrid backend router if enabled
         if let Some(ref backend_router) = self.backend_router {
-            return self.handle_with_backend_router(req, remote_addr, backend_router).await;
+            return self.handle_with_backend_router(req, peer_addr, backend_router).await;
         }
 
         router::handle_request(
             req,
-            remote_addr,
+            peer_addr,
             Arc::clone(&self.worker_pool),
             Arc::clone(&self.metrics),
             Arc::clone(&self.config),
@@ -494,7 +595,7 @@ impl Server {
     async fn handle_with_backend_router<B>(
         &self,
         req: Request<B>,
-        remote_addr: SocketAddr,
+        peer_addr: PeerAddr,
         backend_router: &crate::backend::router::BackendRouter,
     ) -> Result<Response<String>>
     where
@@ -553,7 +654,7 @@ impl Server {
             headers,
             body: body_bytes,
             query_string,
-            remote_addr: remote_addr.to_string(),
+            remote_addr: peer_addr.to_string(),
         };
 
         // Route to appropriate backend

@@ -154,6 +154,19 @@ pub struct Config {
     pub backend: BackendConfig,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum ListenType {
+    Tcp,
+    Unix,
+}
+
+impl Default for ListenType {
+    fn default() -> Self {
+        ListenType::Tcp
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ServerConfig {
     #[serde(default = "default_host")]
@@ -168,6 +181,10 @@ pub struct ServerConfig {
     pub multi_process: bool,
     #[serde(default = "default_workers")]
     pub process_count: usize,
+    #[serde(default)]
+    pub listen_type: ListenType,
+    #[serde(default)]
+    pub unix_socket_path: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -554,23 +571,26 @@ impl Default for HealthCheckConfig {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CircuitBreakerConfig {
-    #[serde(default = "default_true")]
+    #[serde(default)]
     pub enable: bool,
     #[serde(default = "default_failure_threshold")]
-    pub failure_threshold: u32,
+    pub failure_threshold: usize,
     #[serde(default = "default_success_threshold")]
-    pub success_threshold: u32,
+    pub success_threshold: usize,
     #[serde(default = "default_timeout_seconds")]
     pub timeout_seconds: u64,
+    #[serde(default = "default_half_open_max_requests")]
+    pub half_open_max_requests: usize,
 }
 
 impl Default for CircuitBreakerConfig {
     fn default() -> Self {
         Self {
-            enable: true,
+            enable: false,
             failure_threshold: default_failure_threshold(),
             success_threshold: default_success_threshold(),
             timeout_seconds: default_timeout_seconds(),
+            half_open_max_requests: default_half_open_max_requests(),
         }
     }
 }
@@ -627,16 +647,20 @@ fn default_healthy_threshold() -> u32 {
     2
 }
 
-fn default_failure_threshold() -> u32 {
+fn default_failure_threshold() -> usize {
     5
 }
 
-fn default_success_threshold() -> u32 {
+fn default_success_threshold() -> usize {
     2
 }
 
 fn default_timeout_seconds() -> u64 {
     60
+}
+
+fn default_half_open_max_requests() -> usize {
+    3
 }
 
 // Deployment configuration
@@ -740,6 +764,37 @@ pub struct BackendConfig {
     pub routing_rules: Vec<RoutingRule>,
     #[serde(default)]
     pub static_files: StaticFilesConfig,
+    #[serde(default)]
+    pub connection_pool: ConnectionPoolConfig,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConnectionPoolConfig {
+    #[serde(default = "default_pool_max_size")]
+    pub max_size: usize,
+    #[serde(default = "default_pool_max_idle_time")]
+    pub max_idle_time_secs: u64,
+    #[serde(default = "default_pool_max_lifetime")]
+    pub max_lifetime_secs: u64,
+    #[serde(default = "default_pool_connect_timeout")]
+    pub connect_timeout_secs: u64,
+    #[serde(default)]
+    pub enable_metrics: bool,
+    #[serde(default)]
+    pub circuit_breaker: CircuitBreakerConfig,
+}
+
+impl Default for ConnectionPoolConfig {
+    fn default() -> Self {
+        Self {
+            max_size: default_pool_max_size(),
+            max_idle_time_secs: default_pool_max_idle_time(),
+            max_lifetime_secs: default_pool_max_lifetime(),
+            connect_timeout_secs: default_pool_connect_timeout(),
+            enable_metrics: true,
+            circuit_breaker: CircuitBreakerConfig::default(),
+        }
+    }
 }
 
 impl Default for BackendConfig {
@@ -749,6 +804,7 @@ impl Default for BackendConfig {
             default_backend: default_backend_type(),
             routing_rules: Vec::new(),
             static_files: StaticFilesConfig::default(),
+            connection_pool: ConnectionPoolConfig::default(),
         }
     }
 }
@@ -800,6 +856,22 @@ fn default_priority() -> u32 {
 
 fn default_index_files() -> Vec<String> {
     vec!["index.html".to_string(), "index.htm".to_string()]
+}
+
+fn default_pool_max_size() -> usize {
+    20
+}
+
+fn default_pool_max_idle_time() -> u64 {
+    60
+}
+
+fn default_pool_max_lifetime() -> u64 {
+    3600
+}
+
+fn default_pool_connect_timeout() -> u64 {
+    5
 }
 
 impl Config {
