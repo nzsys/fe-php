@@ -293,8 +293,8 @@ impl UpstreamServer {
         cb_config: &crate::config::CircuitBreakerConfig,
     ) -> Result<Self> {
         let circuit_breaker = SimpleCircuitBreaker::new(
-            cb_config.failure_threshold,
-            cb_config.success_threshold,
+            cb_config.failure_threshold as u32,
+            cb_config.success_threshold as u32,
             Duration::from_secs(cb_config.timeout_seconds),
         );
 
