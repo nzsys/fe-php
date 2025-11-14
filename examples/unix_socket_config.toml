@@ -1,0 +1,60 @@
+# Unix Socket Configuration Example
+# This example shows how to configure fe-php to listen on a Unix socket instead of TCP
+
+[server]
+# Set listen_type to "unix" to enable Unix socket
+listen_type = "unix"
+# Unix socket path - must be writable
+unix_socket_path = "/tmp/fe-php.sock"
+workers = 4
+enable_http2 = true
+
+# Note: host and port are ignored when using Unix socket
+# but can be left in the config for easy switching between TCP and Unix
+
+[php]
+libphp_path = "/usr/local/php-zts-embed/lib/libphp.dylib"
+document_root = "/Users/nzsys/Web"
+worker_max_requests = 10000
+use_fpm = false
+fpm_socket = "127.0.0.1:9000"
+
+[php.opcache]
+enable = true
+memory_size = "256M"
+max_files = 10000
+validate_timestamps = false
+
+[logging]
+level = "info"
+format = "json"
+output = "stdout"
+
+[metrics]
+enable = true
+endpoint = "/_metrics"
+port = 9090
+
+[backend]
+enable_hybrid = false
+default_backend = "embedded"
+
+# Example Nginx configuration to use with Unix socket:
+#
+# upstream fe-php {
+#     server unix:/tmp/fe-php.sock;
+# }
+#
+# server {
+#     listen 80;
+#     server_name example.com;
+#
+#     location / {
+#         proxy_pass http://fe-php;
+#         proxy_http_version 1.1;
+#         proxy_set_header Upgrade $http_upgrade;
+#         proxy_set_header Connection 'upgrade';
+#         proxy_set_header Host $host;
+#         proxy_cache_bypass $http_upgrade;
+#     }
+# }

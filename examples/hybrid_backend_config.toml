@@ -26,15 +26,40 @@ memory_size = "256M"
 max_files = 10000
 validate_timestamps = false
 
+# ============================================================
+# Logging Configuration
+# ============================================================
 [logging]
+# ログレベル: "trace", "debug", "info", "warn", "error"
 level = "info"
+
+# ログフォーマット: "json", "pretty", "compact"
+# - json: 構造化ログ（本番環境推奨）
+# - pretty: 人間が読みやすい形式（開発環境推奨）
+# - compact: コンパクトな形式
 format = "json"
+
+# 出力先: "stdout", "stderr", またはファイルパス
+# 例: output = "/var/log/fe-php/server.log"
 output = "stdout"
 
+# ============================================================
+# Metrics Configuration
+# ============================================================
 [metrics]
+# Prometheusメトリクスを有効化
 enable = true
+
+# メトリクスエンドポイント（HTTPサーバーのパス）
 endpoint = "/_metrics"
+
+# メトリクス専用ポート（メインサーバーと分離）
 port = 9090
+
+# メトリクス収集の詳細設定（オプション）
+# collect_interval_secs = 60  # メトリクス収集間隔（秒）
+# enable_histogram = true      # ヒストグラムメトリクスを有効化
+# enable_summary = true        # サマリーメトリクスを有効化
 
 [waf]
 enable = true
@@ -45,6 +70,43 @@ rules_path = "examples/waf_rules.toml"
 requests_per_ip = 100
 window_seconds = 60
 burst = 10
+
+# ============================================================
+# Admin Console Configuration
+# ============================================================
+[admin]
+# Admin Consoleを有効化
+enable = true
+
+# リスニングホスト（セキュリティのため127.0.0.1推奨）
+# 本番環境では必ずlocalhostに設定し、リバースプロキシ経由でアクセス
+host = "localhost"
+
+# Admin Console用HTTPポート
+http_port = 9000
+
+# Unix socket（オプション、未使用の場合はコメントアウト可）
+unix_socket = "/var/run/fe-php.sock"
+
+# 許可するIPアドレスのリスト（セキュリティ強化）
+# コメントアウト時は全てのIPを許可（非推奨）
+#allowed_ips = ["127.0.0.1"]
+
+# ============================================================
+# Admin Console アクセス方法:
+# ============================================================
+# Webブラウザ: http://localhost:9000/
+# JSON API:     curl http://localhost:9000/api/status
+#
+# 利用可能なページ:
+#   /           - ダッシュボード（サーバー状態、メトリクス、バックエンド）
+#   /metrics    - メトリクスビューア（実装予定）
+#   /logs       - ログビューア（実装予定）
+#   /waf        - WAF管理画面（実装予定）
+#   /backends   - バックエンド詳細（実装予定）
+#   /system     - システム情報（実装予定）
+#   /api/status - JSON API（サーバー状態取得）
+# ============================================================
 
 # ============================================================
 # Hybrid Backend Configuration
