@@ -1,0 +1,566 @@
+----------------------------------------
+Mode: Nginx+PHP-FPM (Port 8081)
+Phase: Phase1_LowLoad
+----------------------------------------
+=== Benchmark Configuration ===
+URL: http://localhost:8081/bench.php
+Duration: 30s
+Target RPS: 50
+Concurrency: 5
+
+=== Benchmark Results ===
+Duration: 30.01s
+Target RPS: 50
+Actual RPS: 45.59
+
+Requests:
+  Total: 1368
+  Successful: 1368 (100.00%)
+  Failed: 0 (0.00%)
+
+Response Times:
+  p50:  5ms
+  p75:  6ms
+  p95:  8ms
+  p99:  9ms
+  max:  35ms
+
+
+----------------------------------------
+Mode: fe-php_Embedded (Port 8082)
+Phase: Phase1_LowLoad
+----------------------------------------
+=== Benchmark Configuration ===
+URL: http://localhost:8082/bench.php
+Duration: 30s
+Target RPS: 50
+Concurrency: 5
+
+=== Benchmark Results ===
+Duration: 30.01s
+Target RPS: 50
+Actual RPS: 44.35
+
+Requests:
+  Total: 1331
+  Successful: 1331 (100.00%)
+  Failed: 0 (0.00%)
+
+Response Times:
+  p50:  4ms
+  p75:  5ms
+  p95:  9ms
+  p99:  31ms
+  max:  230ms
+
+
+----------------------------------------
+Mode: fe-php_FastCGI (Port 8083)
+Phase: Phase1_LowLoad
+----------------------------------------
+=== Benchmark Configuration ===
+URL: http://localhost:8083/bench.php
+Duration: 30s
+Target RPS: 50
+Concurrency: 5
+
+=== Benchmark Results ===
+Duration: 30.01s
+Target RPS: 50
+Actual RPS: 44.99
+
+Requests:
+  Total: 1350
+  Successful: 1350 (100.00%)
+  Failed: 0 (0.00%)
+
+Response Times:
+  p50:  0ms
+  p75:  0ms
+  p95:  3ms
+  p99:  11ms
+  max:  173ms
+
+
+----------------------------------------
+Mode: fe-php_Hybrid (Port 8084)
+Phase: Phase1_LowLoad
+----------------------------------------
+=== Benchmark Configuration ===
+URL: http://localhost:8084/bench.php
+Duration: 30s
+Target RPS: 50
+Concurrency: 5
+
+=== Benchmark Results ===
+Duration: 30.00s
+Target RPS: 50
+Actual RPS: 45.66
+
+Requests:
+  Total: 1370
+  Successful: 1370 (100.00%)
+  Failed: 0 (0.00%)
+
+Response Times:
+  p50:  2ms
+  p75:  2ms
+  p95:  4ms
+  p99:  4ms
+  max:  12ms
+
+
+
+
+----------------------------------------
+Mode: Nginx+PHP-FPM (Port 8081)
+Phase: Phase2_MediumLoad
+----------------------------------------
+=== Benchmark Configuration ===
+URL: http://localhost:8081/bench.php
+Duration: 30s
+Target RPS: 200
+Concurrency: 20
+
+=== Benchmark Results ===
+Duration: 30.01s
+Target RPS: 200
+Actual RPS: 124.59
+
+Requests:
+  Total: 3739
+  Successful: 3739 (100.00%)
+  Failed: 0 (0.00%)
+
+Response Times:
+  p50:  7ms
+  p75:  9ms
+  p95:  11ms
+  p99:  14ms
+  max:  121ms
+
+
+----------------------------------------
+Mode: fe-php_Embedded (Port 8082)
+Phase: Phase2_MediumLoad
+----------------------------------------
+=== Benchmark Configuration ===
+URL: http://localhost:8082/bench.php
+Duration: 30s
+Target RPS: 200
+Concurrency: 20
+
+=== Benchmark Results ===
+Duration: 30.01s
+Target RPS: 200
+Actual RPS: 155.81
+
+Requests:
+  Total: 4675
+  Successful: 4675 (100.00%)
+  Failed: 0 (0.00%)
+
+Response Times:
+  p50:  2ms
+  p75:  2ms
+  p95:  4ms
+  p99:  5ms
+  max:  10ms
+
+
+----------------------------------------
+Mode: fe-php_FastCGI (Port 8083)
+Phase: Phase2_MediumLoad
+----------------------------------------
+=== Benchmark Configuration ===
+URL: http://localhost:8083/bench.php
+Duration: 30s
+Target RPS: 200
+Concurrency: 20
+
+=== Benchmark Results ===
+Duration: 30.00s
+Target RPS: 200
+Actual RPS: 150.25
+
+Requests:
+  Total: 4508
+  Successful: 4508 (100.00%)
+  Failed: 0 (0.00%)
+
+Response Times:
+  p50:  0ms
+  p75:  0ms
+  p95:  0ms
+  p99:  1ms
+  max:  85ms
+
+
+----------------------------------------
+Mode: fe-php_Hybrid (Port 8084)
+Phase: Phase2_MediumLoad
+----------------------------------------
+=== Benchmark Configuration ===
+URL: http://localhost:8084/bench.php
+Duration: 30s
+Target RPS: 200
+Concurrency: 20
+
+=== Benchmark Results ===
+Duration: 30.00s
+Target RPS: 200
+Actual RPS: 154.70
+
+Requests:
+  Total: 4641
+  Successful: 4641 (100.00%)
+  Failed: 0 (0.00%)
+
+Response Times:
+  p50:  2ms
+  p75:  2ms
+  p95:  3ms
+  p99:  4ms
+  max:  39ms
+
+
+
+
+----------------------------------------
+Mode: Nginx+PHP-FPM (Port 8081)
+Phase: Phase3_HighConcurrency
+----------------------------------------
+=== Benchmark Configuration ===
+URL: http://localhost:8081/bench.php
+Duration: 30s
+Target RPS: 500
+Concurrency: 50
+
+=== Benchmark Results ===
+Duration: 30.00s
+Target RPS: 500
+Actual RPS: 209.86
+
+Requests:
+  Total: 6296
+  Successful: 6296 (100.00%)
+  Failed: 0 (0.00%)
+
+Response Times:
+  p50:  4ms
+  p75:  4ms
+  p95:  6ms
+  p99:  10ms
+  max:  70ms
+
+
+----------------------------------------
+Mode: fe-php_Embedded (Port 8082)
+Phase: Phase3_HighConcurrency
+----------------------------------------
+=== Benchmark Configuration ===
+URL: http://localhost:8082/bench.php
+Duration: 30s
+Target RPS: 500
+Concurrency: 50
+
+=== Benchmark Results ===
+Duration: 30.00s
+Target RPS: 500
+Actual RPS: 358.80
+
+Requests:
+  Total: 10764
+  Successful: 10764 (100.00%)
+  Failed: 0 (0.00%)
+
+Response Times:
+  p50:  1ms
+  p75:  2ms
+  p95:  2ms
+  p99:  4ms
+  max:  64ms
+
+
+----------------------------------------
+Mode: fe-php_FastCGI (Port 8083)
+Phase: Phase3_HighConcurrency
+----------------------------------------
+=== Benchmark Configuration ===
+URL: http://localhost:8083/bench.php
+Duration: 30s
+Target RPS: 500
+Concurrency: 50
+
+=== Benchmark Results ===
+Duration: 30.00s
+Target RPS: 500
+Actual RPS: 288.51
+
+Requests:
+  Total: 8656
+  Successful: 8656 (100.00%)
+  Failed: 0 (0.00%)
+
+Response Times:
+  p50:  0ms
+  p75:  0ms
+  p95:  0ms
+  p99:  1ms
+  max:  592ms
+
+
+----------------------------------------
+Mode: fe-php_Hybrid (Port 8084)
+Phase: Phase3_HighConcurrency
+----------------------------------------
+=== Benchmark Configuration ===
+URL: http://localhost:8084/bench.php
+Duration: 30s
+Target RPS: 500
+Concurrency: 50
+
+=== Benchmark Results ===
+Duration: 30.00s
+Target RPS: 500
+Actual RPS: 374.80
+
+Requests:
+  Total: 11245
+  Successful: 11245 (100.00%)
+  Failed: 0 (0.00%)
+
+Response Times:
+  p50:  2ms
+  p75:  2ms
+  p95:  2ms
+  p99:  3ms
+  max:  57ms
+
+
+
+
+----------------------------------------
+Mode: Nginx+PHP-FPM (Port 8081)
+Phase: Phase4_StressTest
+----------------------------------------
+=== Benchmark Configuration ===
+URL: http://localhost:8081/bench.php
+Duration: 30s
+Target RPS: 1000
+Concurrency: 100
+
+=== Benchmark Results ===
+Duration: 30.00s
+Target RPS: 1000
+Actual RPS: 201.18
+
+Requests:
+  Total: 6036
+  Successful: 6036 (100.00%)
+  Failed: 0 (0.00%)
+
+Response Times:
+  p50:  4ms
+  p75:  4ms
+  p95:  6ms
+  p99:  11ms
+  max:  278ms
+
+
+----------------------------------------
+Mode: fe-php_Embedded (Port 8082)
+Phase: Phase4_StressTest
+----------------------------------------
+=== Benchmark Configuration ===
+URL: http://localhost:8082/bench.php
+Duration: 30s
+Target RPS: 1000
+Concurrency: 100
+
+=== Benchmark Results ===
+Duration: 30.00s
+Target RPS: 1000
+Actual RPS: 429.76
+
+Requests:
+  Total: 12895
+  Successful: 12895 (100.00%)
+  Failed: 0 (0.00%)
+
+Response Times:
+  p50:  1ms
+  p75:  2ms
+  p95:  3ms
+  p99:  5ms
+  max:  42ms
+
+
+----------------------------------------
+Mode: fe-php_FastCGI (Port 8083)
+Phase: Phase4_StressTest
+----------------------------------------
+=== Benchmark Configuration ===
+URL: http://localhost:8083/bench.php
+Duration: 30s
+Target RPS: 1000
+Concurrency: 100
+
+=== Benchmark Results ===
+Duration: 30.00s
+Target RPS: 1000
+Actual RPS: 416.26
+
+Requests:
+  Total: 12488
+  Successful: 12488 (100.00%)
+  Failed: 0 (0.00%)
+
+Response Times:
+  p50:  0ms
+  p75:  0ms
+  p95:  0ms
+  p99:  1ms
+  max:  884ms
+
+
+----------------------------------------
+Mode: fe-php_Hybrid (Port 8084)
+Phase: Phase4_StressTest
+----------------------------------------
+=== Benchmark Configuration ===
+URL: http://localhost:8084/bench.php
+Duration: 30s
+Target RPS: 1000
+Concurrency: 100
+
+=== Benchmark Results ===
+Duration: 30.00s
+Target RPS: 1000
+Actual RPS: 262.80
+
+Requests:
+  Total: 7884
+  Successful: 7884 (100.00%)
+  Failed: 0 (0.00%)
+
+Response Times:
+  p50:  3ms
+  p75:  4ms
+  p95:  5ms
+  p99:  7ms
+  max:  66ms
+
+
+
+
+----------------------------------------
+Mode: Nginx+PHP-FPM (Port 8081)
+Phase: Phase5_LatencyOptimized
+----------------------------------------
+=== Benchmark Configuration ===
+URL: http://localhost:8081/bench.php
+Duration: 60s
+Target RPS: 10
+Concurrency: 1
+
+=== Benchmark Results ===
+Duration: 60.04s
+Target RPS: 10
+Actual RPS: 9.81
+
+Requests:
+  Total: 589
+  Successful: 589 (100.00%)
+  Failed: 0 (0.00%)
+
+Response Times:
+  p50:  9ms
+  p75:  11ms
+  p95:  15ms
+  p99:  18ms
+  max:  25ms
+
+
+----------------------------------------
+Mode: fe-php_Embedded (Port 8082)
+Phase: Phase5_LatencyOptimized
+----------------------------------------
+=== Benchmark Configuration ===
+URL: http://localhost:8082/bench.php
+Duration: 60s
+Target RPS: 10
+Concurrency: 1
+
+=== Benchmark Results ===
+Duration: 60.08s
+Target RPS: 10
+Actual RPS: 9.80
+
+Requests:
+  Total: 589
+  Successful: 589 (100.00%)
+  Failed: 0 (0.00%)
+
+Response Times:
+  p50:  3ms
+  p75:  5ms
+  p95:  7ms
+  p99:  9ms
+  max:  19ms
+
+
+----------------------------------------
+Mode: fe-php_FastCGI (Port 8083)
+Phase: Phase5_LatencyOptimized
+----------------------------------------
+=== Benchmark Configuration ===
+URL: http://localhost:8083/bench.php
+Duration: 60s
+Target RPS: 10
+Concurrency: 1
+
+=== Benchmark Results ===
+Duration: 60.05s
+Target RPS: 10
+Actual RPS: 9.69
+
+Requests:
+  Total: 582
+  Successful: 582 (100.00%)
+  Failed: 0 (0.00%)
+
+Response Times:
+  p50:  0ms
+  p75:  0ms
+  p95:  1ms
+  p99:  1ms
+  max:  813ms
+
+
+----------------------------------------
+Mode: fe-php_Hybrid (Port 8084)
+Phase: Phase5_LatencyOptimized
+----------------------------------------
+=== Benchmark Configuration ===
+URL: http://localhost:8084/bench.php
+Duration: 60s
+Target RPS: 10
+Concurrency: 1
+
+=== Benchmark Results ===
+Duration: 60.04s
+Target RPS: 10
+Actual RPS: 9.81
+
+Requests:
+  Total: 589
+  Successful: 589 (100.00%)
+  Failed: 0 (0.00%)
+
+Response Times:
+  p50:  3ms
+  p75:  5ms
+  p95:  7ms
+  p99:  8ms
+  max:  9ms

@@ -4,13 +4,10 @@ use std::path::PathBuf;
 
 #[derive(Args)]
 pub struct CompareArgs {
-    /// First configuration file
     pub config1: PathBuf,
 
-    /// Second configuration file
     pub config2: PathBuf,
 
-    /// Run benchmark to compare performance
     #[arg(short, long)]
     pub with_benchmark: bool,
 }
@@ -22,12 +19,6 @@ pub async fn run(args: CompareArgs) -> Result<()> {
     println!("  Config 1: {}", args.config1.display());
     println!("  Config 2: {}", args.config2.display());
     println!();
-
-    // In a real implementation, we would:
-    // 1. Load both configurations
-    // 2. Perform a diff showing changes
-    // 3. If --with-benchmark, run benchmarks on both
-    // 4. Show performance comparison
 
     println!("=== Configuration Diff ===");
     println!("+ [waf] enable = true");

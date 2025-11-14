@@ -7,17 +7,12 @@ use anyhow::Result;
 use std::fmt;
 use std::str::FromStr;
 
-/// WAF operation mode
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum WafMode {
-    /// WAF disabled
     Off,
-    /// Learn mode - collect patterns without blocking
     Learn,
-    /// Detect mode - log attacks without blocking
     Detect,
-    /// Block mode - actively block malicious requests
     Block,
 }
 
@@ -52,13 +47,10 @@ impl FromStr for WafMode {
     }
 }
 
-/// Deployment strategy
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DeploymentStrategy {
-    /// A/B testing
     AbTest,
-    /// Canary deployment
     Canary,
 }
 
@@ -89,7 +81,6 @@ impl FromStr for DeploymentStrategy {
     }
 }
 
-/// Load balancing algorithm
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum LoadBalancingAlgorithm {
@@ -159,6 +150,8 @@ pub struct Config {
     pub load_balancing: LoadBalancingConfig,
     #[serde(default)]
     pub deployment: DeploymentConfig,
+    #[serde(default)]
+    pub backend: BackendConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -251,6 +244,8 @@ pub struct RateLimitConfig {
 pub struct AdminConfig {
     #[serde(default)]
     pub enable: bool,
+    #[serde(default = "default_admin_host")]
+    pub host: String,
     #[serde(default = "default_admin_socket")]
     pub unix_socket: PathBuf,
     #[serde(default = "default_admin_port")]
@@ -320,6 +315,10 @@ fn default_burst() -> u32 {
     10
 }
 
+fn default_admin_host() -> String {
+    "127.0.0.1".to_string()
+}
+
 fn default_admin_socket() -> PathBuf {
     PathBuf::from("/var/run/fe-php.sock")
 }
@@ -372,6 +371,7 @@ impl Default for AdminConfig {
     fn default() -> Self {
         Self {
             enable: false,
+            host: default_admin_host(),
             unix_socket: default_admin_socket(),
             http_port: default_admin_port(),
             allowed_ips: default_allowed_ips(),
@@ -391,6 +391,10 @@ pub struct TlsConfig {
     pub ca_cert_path: Option<PathBuf>,
     #[serde(default)]
     pub alpn_protocols: Vec<String>,
+    #[serde(default)]
+    pub http_redirect: bool,
+    #[serde(default = "default_http_port")]
+    pub http_port: u16,
 }
 
 impl Default for TlsConfig {
@@ -401,8 +405,14 @@ impl Default for TlsConfig {
             key_path: None,
             ca_cert_path: None,
             alpn_protocols: vec!["h2".to_string(), "http/1.1".to_string()],
+            http_redirect: false,
+            http_port: default_http_port(),
         }
     }
+}
+
+fn default_http_port() -> u16 {
+    80
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -718,6 +728,78 @@ fn default_max_error_rate() -> f64 {
 
 fn default_min_observation_period() -> u64 {
     60  // 60 seconds
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BackendConfig {
+    #[serde(default)]
+    pub enable_hybrid: bool,
+    #[serde(default = "default_backend_type")]
+    pub default_backend: String,
+    #[serde(default)]
+    pub routing_rules: Vec<RoutingRule>,
+    #[serde(default)]
+    pub static_files: StaticFilesConfig,
+}
+
+impl Default for BackendConfig {
+    fn default() -> Self {
+        Self {
+            enable_hybrid: false,
+            default_backend: default_backend_type(),
+            routing_rules: Vec::new(),
+            static_files: StaticFilesConfig::default(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RoutingRule {
+    pub pattern: PathPatternConfig,
+    pub backend: String,
+    #[serde(default = "default_priority")]
+    pub priority: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", content = "value")]
+#[serde(rename_all = "lowercase")]
+pub enum PathPatternConfig {
+    Exact(String),
+    Prefix(String),
+    Suffix(String),
+    Regex(String),
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StaticFilesConfig {
+    #[serde(default)]
+    pub enable: bool,
+    pub root: Option<PathBuf>,
+    #[serde(default = "default_index_files")]
+    pub index_files: Vec<String>,
+}
+
+impl Default for StaticFilesConfig {
+    fn default() -> Self {
+        Self {
+            enable: false,
+            root: None,
+            index_files: default_index_files(),
+        }
+    }
+}
+
+fn default_backend_type() -> String {
+    "embedded".to_string()
+}
+
+fn default_priority() -> u32 {
+    50
+}
+
+fn default_index_files() -> Vec<String> {
+    vec!["index.html".to_string(), "index.htm".to_string()]
 }
 
 impl Config {

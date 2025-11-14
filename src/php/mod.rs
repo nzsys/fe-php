@@ -2,11 +2,11 @@ pub mod ffi;
 pub mod worker;
 pub mod executor;
 pub mod fastcgi;
+pub mod connection_pool;
 
 pub use worker::{WorkerPool, WorkerPoolConfig};
 pub use executor::{PhpExecutor, PhpRequest, PhpResponse};
 
-use anyhow::Result;
 use std::path::PathBuf;
 
 #[derive(Debug, Clone)]

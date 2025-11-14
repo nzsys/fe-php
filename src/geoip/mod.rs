@@ -5,7 +5,6 @@ use std::path::Path;
 use std::sync::Arc;
 use tracing::{debug, warn};
 
-/// GeoIP filtering manager using MaxMind GeoIP2 database
 pub struct GeoIpManager {
     reader: Arc<Reader<Vec<u8>>>,
     allowed_countries: Vec<String>,
@@ -13,7 +12,6 @@ pub struct GeoIpManager {
 }
 
 impl GeoIpManager {
-    /// Create a new GeoIP manager from a MaxMind database file
     pub fn new(
         database_path: &Path,
         allowed_countries: Vec<String>,
@@ -35,12 +33,9 @@ impl GeoIpManager {
         })
     }
 
-    /// Check if an IP address is allowed based on GeoIP rules
     pub fn is_allowed(&self, ip: IpAddr) -> Result<bool> {
-        // Lookup country for the IP
         let country = self.lookup_country(ip)?;
 
-        // If no country found, allow by default (localhost, private IPs, etc.)
         let country_code = match country {
             Some(code) => code,
             None => {
@@ -49,7 +44,6 @@ impl GeoIpManager {
             }
         };
 
-        // Check blocked countries first
         if !self.blocked_countries.is_empty() {
             if self.blocked_countries.contains(&country_code) {
                 debug!("IP {} blocked (country: {})", ip, country_code);
@@ -57,7 +51,6 @@ impl GeoIpManager {
             }
         }
 
-        // Check allowed countries
         if !self.allowed_countries.is_empty() {
             let allowed = self.allowed_countries.contains(&country_code);
             if !allowed {
@@ -66,11 +59,9 @@ impl GeoIpManager {
             return Ok(allowed);
         }
 
-        // If no rules configured, allow all
         Ok(true)
     }
 
-    /// Lookup country code for an IP address
     pub fn lookup_country(&self, ip: IpAddr) -> Result<Option<String>> {
         match self.reader.lookup::<geoip2::Country>(ip) {
             Ok(country) => {
@@ -83,13 +74,11 @@ impl GeoIpManager {
             }
             Err(e) => {
                 warn!("GeoIP lookup failed for {}: {}", ip, e);
-                // Return None instead of error for missing entries
                 Ok(None)
             }
         }
     }
 
-    /// Get detailed location information for an IP
     pub fn lookup_location(&self, ip: IpAddr) -> Result<Option<LocationInfo>> {
         match self.reader.lookup::<geoip2::City>(ip) {
             Ok(city) => {
@@ -130,7 +119,6 @@ mod tests {
 
     #[test]
     fn test_geoip_manager_requires_database() {
-        // This test would need an actual GeoIP database to work
-        // In a real scenario, you would use a test database
+
     }
 }

@@ -7,7 +7,6 @@ use tracing::{info, warn, error};
 
 use crate::config::{VariantConfig, CanaryConfig};
 
-/// Canary deployment manager with automatic promotion and rollback
 pub struct CanaryDeploymentManager {
     variants: Vec<VariantConfig>,
     config: CanaryConfig,
@@ -17,7 +16,6 @@ pub struct CanaryDeploymentManager {
 }
 
 impl CanaryDeploymentManager {
-    /// Create a new canary deployment manager
     pub fn new(variants: Vec<VariantConfig>, config: CanaryConfig) -> Result<Self> {
         if variants.len() != 2 {
             anyhow::bail!("Canary deployment requires exactly 2 variants (stable and canary)");
@@ -39,23 +37,19 @@ impl CanaryDeploymentManager {
         })
     }
 
-    /// Record a request result
     pub async fn record_request(&mut self, variant_name: &str, success: bool, response_time_ms: u64) {
         if let Some(stats) = self.stats.get(variant_name) {
             stats.record_request(success, response_time_ms);
         }
     }
 
-    /// Check health and potentially update phase (promote or rollback)
     pub async fn check_and_update(&mut self) -> Result<()> {
         let elapsed = self.phase_start_time.elapsed();
 
-        // Wait for minimum observation period
         if elapsed < Duration::from_secs(self.config.min_observation_period_secs) {
             return Ok(());
         }
 
-        // Get canary variant stats
         let canary_variant = self.variants.iter()
             .find(|v| v.name.contains("canary") || v.name.contains("new"))
             .ok_or_else(|| anyhow::anyhow!("Canary variant not found"))?;
@@ -65,13 +59,11 @@ impl CanaryDeploymentManager {
 
         let snapshot = canary_stats.snapshot();
 
-        // Check for rollback conditions
         if self.should_rollback(&snapshot) {
             self.rollback().await?;
             return Ok(());
         }
 
-        // Check for promotion conditions
         if self.should_promote(&snapshot) {
             self.promote().await?;
         }
@@ -79,13 +71,11 @@ impl CanaryDeploymentManager {
         Ok(())
     }
 
-    /// Check if we should rollback
     fn should_rollback(&self, stats: &CanaryStatsSnapshot) -> bool {
         if stats.total_requests < self.config.min_requests_before_decision {
             return false;
         }
 
-        // Rollback if error rate exceeds threshold
         if stats.error_rate > self.config.max_error_rate {
             warn!(
                 "Canary error rate {:.2}% exceeds threshold {:.2}%",
@@ -95,7 +85,6 @@ impl CanaryDeploymentManager {
             return true;
         }
 
-        // Rollback if response time is too high
         if let Some(max_response_time) = self.config.max_response_time_ms {
             if stats.avg_response_time_ms > max_response_time {
                 warn!(
@@ -110,21 +99,17 @@ impl CanaryDeploymentManager {
         false
     }
 
-    /// Check if we should promote canary
     fn should_promote(&self, stats: &CanaryStatsSnapshot) -> bool {
         if stats.total_requests < self.config.min_requests_before_decision {
             return false;
         }
 
-        // Success rate must be above threshold
         stats.error_rate <= self.config.max_error_rate
     }
 
-    /// Rollback to stable version
     async fn rollback(&mut self) -> Result<()> {
         error!("Canary deployment FAILED - Rolling back to stable");
 
-        // Set canary weight to 0, stable to 100
         for variant in &mut self.variants {
             if variant.name.contains("canary") || variant.name.contains("new") {
                 variant.weight = 0;
@@ -139,7 +124,6 @@ impl CanaryDeploymentManager {
         Ok(())
     }
 
-    /// Promote canary to next phase or complete
     async fn promote(&mut self) -> Result<()> {
         match self.current_phase {
             CanaryPhase::Initial => {
@@ -171,7 +155,6 @@ impl CanaryDeploymentManager {
         Ok(())
     }
 
-    /// Set weights for stable and canary variants
     fn set_weights(&mut self, stable_weight: u32, canary_weight: u32) {
         for variant in &mut self.variants {
             if variant.name.contains("canary") || variant.name.contains("new") {
@@ -182,14 +165,12 @@ impl CanaryDeploymentManager {
         }
     }
 
-    /// Reset statistics for new phase
     fn reset_stats(&mut self) {
         for stats in self.stats.values() {
             stats.reset();
         }
     }
 
-    /// Get current canary statistics
     pub fn get_stats(&self) -> CanaryDeploymentStats {
         let variant_stats: Vec<_> = self.variants
             .iter()
@@ -217,7 +198,6 @@ enum CanaryPhase {
     RolledBack,
 }
 
-/// Statistics for canary deployment
 #[derive(Debug)]
 struct CanaryStats {
     total_requests: AtomicU64,

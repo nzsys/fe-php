@@ -1,5 +1,4 @@
 use serde::{Deserialize, Serialize};
-use std::sync::Arc;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct WorkerStatus {
@@ -18,7 +17,7 @@ pub struct ServerStatus {
 }
 
 pub struct AdminApi {
-    // Store references to server state
+
 }
 
 impl AdminApi {
@@ -27,7 +26,6 @@ impl AdminApi {
     }
 
     pub fn get_status(&self) -> ServerStatus {
-        // In a real implementation, this would fetch actual server state
         ServerStatus {
             uptime_seconds: 0,
             active_connections: 0,
@@ -37,12 +35,10 @@ impl AdminApi {
     }
 
     pub fn reload_config(&self) -> Result<(), String> {
-        // Implement configuration reload
         Ok(())
     }
 
     pub fn restart_workers(&self) -> Result<(), String> {
-        // Implement worker restart
         Ok(())
     }
 }

@@ -10,6 +10,7 @@ use std::sync::Mutex;
 use libloading::os::unix::Library as UnixLibrary;
 
 // PHP types
+#[allow(dead_code)]
 type ZvalPtr = *mut c_void;
 
 // zend_stream_type enum (PHP 8.1+)
@@ -184,13 +185,14 @@ extern "C" fn php_send_header(_sapi_header: *mut c_void, _server_context: *mut c
 }
 
 /// Stub callback for reading POST data
+#[allow(dead_code)]
 extern "C" fn php_read_post_data(_sapi_request_info: *mut c_void) {
     // Stub implementation
 }
 
 /// PHP FFI bindings
 pub struct PhpFfi {
-    library: Library,
+    _library: Library,
     // Function pointers
     sapi_startup: Symbol<'static, unsafe extern "C" fn(*mut SapiModule)>,
     php_module_startup: Symbol<'static, unsafe extern "C" fn(*mut SapiModule, *mut c_void) -> c_int>,
@@ -203,7 +205,7 @@ pub struct PhpFfi {
     // TSRM functions for ZTS (Zend Thread Safety) support
     php_tsrm_startup_ex: Option<Symbol<'static, unsafe extern "C" fn(c_int) -> c_int>>,
     tsrm_shutdown: Option<Symbol<'static, unsafe extern "C" fn()>>,
-    ts_resource: Option<Symbol<'static, unsafe extern "C" fn(c_int) -> *mut c_void>>,
+    ts_resource_ex: Option<Symbol<'static, unsafe extern "C" fn(c_int, *mut c_void) -> *mut c_void>>,
     ts_free_thread: Option<Symbol<'static, unsafe extern "C" fn()>>,
     sapi_module: *mut SapiModule,
     // Keep CStrings alive for the lifetime of PhpFfi
@@ -327,8 +329,8 @@ impl PhpFfi {
                 .map(|symbol| std::mem::transmute(symbol))
         };
 
-        let ts_resource = unsafe {
-            library.get::<unsafe extern "C" fn(c_int) -> *mut c_void>(b"ts_resource_ex\0")
+        let ts_resource_ex = unsafe {
+            library.get::<unsafe extern "C" fn(c_int, *mut c_void) -> *mut c_void>(b"ts_resource_ex\0")
                 .ok()
                 .map(|symbol| std::mem::transmute(symbol))
         };
@@ -353,7 +355,7 @@ impl PhpFfi {
 
 
         Ok(Self {
-            library,
+            _library: library,
             sapi_startup,
             php_module_startup,
             php_module_shutdown,
@@ -364,7 +366,7 @@ impl PhpFfi {
             zend_destroy_file_handle,
             php_tsrm_startup_ex,
             tsrm_shutdown,
-            ts_resource,
+            ts_resource_ex,
             ts_free_thread,
             sapi_module,
             _sapi_name: sapi_name,
@@ -480,14 +482,19 @@ impl PhpFfi {
     /// This MUST be called once by each worker thread before processing requests
     pub fn thread_init(&self) {
         unsafe {
-            if let Some(ts_resource) = &self.ts_resource {
-                // Call ts_resource(0) to fetch/allocate thread-local storage for this thread
-                // Parameter 0 means "allocate resources for the current thread if not already allocated"
+            if let Some(ts_resource_ex) = &self.ts_resource_ex {
+                // Call ts_resource_ex(0, NULL) to allocate thread-local storage for this thread
+                // First parameter: 0 = core resources
+                // Second parameter: NULL = use current thread ID
                 tracing::info!("Initializing TSRM thread-local storage for worker thread");
-                ts_resource(0);
-                tracing::info!("TSRM thread-local storage initialized");
+                let result = ts_resource_ex(0, ptr::null_mut());
+                if result.is_null() {
+                    tracing::error!("TSRM thread initialization failed - ts_resource_ex returned NULL");
+                } else {
+                    tracing::info!("TSRM thread-local storage initialized successfully");
+                }
             } else {
-                tracing::warn!("ts_resource function not available - skipping thread initialization (NTS build?)");
+                tracing::warn!("ts_resource_ex function not available - skipping thread initialization (NTS build?)");
             }
         }
     }

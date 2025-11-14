@@ -2,19 +2,17 @@ use anyhow::Result;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
-use tracing::{info, debug};
+use tracing::info;
 
 use crate::config::{VariantConfig, AbTestConfig};
 
-/// A/B test manager for tracking and analyzing variant performance
 pub struct AbTestManager {
-    variants: Vec<VariantConfig>,
+    _variants: Vec<VariantConfig>,
     config: AbTestConfig,
     stats: HashMap<String, Arc<VariantStats>>,
 }
 
 impl AbTestManager {
-    /// Create a new A/B test manager
     pub fn new(variants: Vec<VariantConfig>, config: AbTestConfig) -> Result<Self> {
         let stats: HashMap<String, Arc<VariantStats>> = variants
             .iter()
@@ -24,13 +22,12 @@ impl AbTestManager {
         info!("A/B test initialized with {} variants", variants.len());
 
         Ok(Self {
-            variants,
+            _variants: variants,
             config,
             stats,
         })
     }
 
-    /// Record a request result
     pub fn record_request(&mut self, variant_name: &str, success: bool, response_time_ms: u64) {
         if let Some(stats) = self.stats.get(variant_name) {
             stats.total_requests.fetch_add(1, Ordering::Relaxed);
@@ -41,7 +38,6 @@ impl AbTestManager {
                 stats.failed_requests.fetch_add(1, Ordering::Relaxed);
             }
 
-            // Update response time (simple moving average)
             let current_avg = stats.avg_response_time_ms.load(Ordering::Relaxed);
             let total = stats.total_requests.load(Ordering::Relaxed);
 
@@ -51,8 +47,6 @@ impl AbTestManager {
             }
 
             if self.config.track_conversion {
-                // Conversion tracking would go here
-                // For now, we consider successful requests as conversions
                 if success {
                     stats.conversions.fetch_add(1, Ordering::Relaxed);
                 }
@@ -60,7 +54,6 @@ impl AbTestManager {
         }
     }
 
-    /// Get statistics for all variants
     pub fn get_stats(&self) -> AbTestStats {
         let variant_stats: Vec<_> = self.stats
             .values()
@@ -73,13 +66,11 @@ impl AbTestManager {
         }
     }
 
-    /// Determine the winning variant based on configured criteria
     fn determine_winner(&self) -> Option<String> {
         if !self.has_sufficient_data() {
             return None;
         }
 
-        // Simple winner determination based on success rate and response time
         let mut best_variant: Option<(&String, f64)> = None;
 
         for (name, stats) in &self.stats {
@@ -88,8 +79,6 @@ impl AbTestManager {
                 continue;
             }
 
-            // Calculate score: success_rate * 100 - (response_time_ms / 10)
-            // This favors both high success rates and low response times
             let score = snapshot.success_rate * 100.0 - (snapshot.avg_response_time_ms as f64 / 10.0);
 
             if let Some((_, best_score)) = best_variant {
@@ -104,14 +93,12 @@ impl AbTestManager {
         best_variant.map(|(name, _)| name.clone())
     }
 
-    /// Check if we have sufficient data for analysis
     fn has_sufficient_data(&self) -> bool {
         self.stats.values().all(|s| {
             s.total_requests.load(Ordering::Relaxed) >= self.config.min_requests_per_variant
         })
     }
 
-    /// Reset all statistics
     pub fn reset(&mut self) {
         for stats in self.stats.values() {
             stats.reset();
@@ -120,7 +107,6 @@ impl AbTestManager {
     }
 }
 
-/// Statistics for a single variant
 #[derive(Debug)]
 struct VariantStats {
     name: String,

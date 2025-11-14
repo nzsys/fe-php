@@ -1,7 +1,7 @@
 // Middleware implementation for request processing
 // This module can be extended with various middleware functions
 
-use hyper::{Request, Response};
+use hyper::Request;
 use std::future::Future;
 use std::pin::Pin;
 

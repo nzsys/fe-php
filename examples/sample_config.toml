@@ -1,11 +1,6 @@
-# fe-php Sample Configuration
-# All-in-one PHP Application Platform
-
 [server]
-host = "0.0.0.0"
+host = "localhost"
 port = 8080
-# Number of PHP worker threads (USE THIS - not php.worker_pool_size)
-# Increased for better performance under load
 workers = 8
 
 [php]
@@ -13,44 +8,22 @@ workers = 8
 # FreeBSD: /usr/local/lib/libphp.so
 # Debian/Ubuntu: /usr/lib/libphp.so or /usr/lib/x86_64-linux-gnu/libphp.so
 # From source: /usr/local/lib/libphp.so
-# macOS: /usr/local/php/lib/libphp.dylib
 libphp_path = "/usr/local/php-zts-embed/lib/libphp.dylib"
 
-# Document root for PHP files
-document_root = "/var/www/html"
-
-# DEPRECATED: worker_pool_size is ignored - use [server] workers instead
-# PHP worker pool size
-# worker_pool_size = 8
-
-# Max requests per worker before restart (prevents memory leaks)
+document_root = "/Users/nzsys/Web"
 worker_max_requests = 10000
-
-# Embedded libphp mode (recommended for production - 50-100x faster than PHP-FPM)
-# false = Use embedded libphp (FrankenPHP-style, in-process execution)
-# true = Fallback to PHP-FPM via FastCGI (if libphp not available)
 use_fpm = false
-
-# PHP-FPM socket address (used only when use_fpm = true)
-# TCP: "127.0.0.1:9000"
-# Unix socket: "/var/run/php-fpm.sock"
 fpm_socket = "127.0.0.1:9000"
 
 [php.opcache]
 enable = true
 memory_size = "256M"
 max_files = 10000
-# Set to false in production for better performance
 validate_timestamps = false
 
 [logging]
-# Levels: trace, debug, info, warn, error
 level = "info"
-
-# Formats: json, pretty
 format = "json"
-
-# Output: stdout, file:/path/to/log
 output = "stdout"
 
 [metrics]
@@ -60,7 +33,6 @@ port = 9090
 
 [waf]
 enable = true
-# Modes: off, learn, detect, block
 mode = "block"
 rules_path = "examples/waf_rules.toml"
 
@@ -74,3 +46,25 @@ enable = true
 unix_socket = "/var/run/fe-php.sock"
 http_port = 9000
 allowed_ips = ["127.0.0.1"]
+
+[backend]
+enable_hybrid = false
+default_backend = "embedded"
+
+[backend.static_files]
+enable = false
+
+# [[backend.routing_rules]]
+# pattern = { type = "suffix", value = ".jpg" }
+# backend = "static"
+# priority = 80
+
+# [[backend.routing_rules]]
+# pattern = { type = "prefix", value = "/api/" }
+# backend = "embedded"
+# priority = 90
+
+# [[backend.routing_rules]]
+# pattern = { type = "prefix", value = "/admin/" }
+# backend = "fastcgi"
+# priority = 70
