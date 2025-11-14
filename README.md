@@ -348,10 +348,11 @@ priority = 80
 
 詳細なドキュメントは`docs/`ディレクトリを参照してください：
 
-- **[HYBRID_BACKEND.md](./HYBRID_BACKEND.md)** - ハイブリッドバックエンドの詳細説明
-- **[ARCHITECTURE.md](./ARCHITECTURE.md)** - システム設計と内部構造
-- **[FEATURES.md](./FEATURES.md)** - 全機能の詳細説明
-- **[USAGE.md](./USAGE.md)** - 設定と運用方法
+- **[HYBRID_BACKEND.md](./docs/HYBRID_BACKEND.md)** - ハイブリッドバックエンドの詳細説明
+- **[ARCHITECTURE.md](./docs/ARCHITECTURE.md)** - システム設計と内部構造
+- **[FEATURES.md](./docs/FEATURES.md)** - 全機能の詳細説明
+- **[ADMIN_GUIDE.md](./docs/ADMIN_GUIDE.md)** - 管理画面利用方法
+- **[USAGE.md](./docs/USAGE.md)** - 設定と運用方法
 
 ## パフォーマンスチューニング
 
@@ -417,26 +418,6 @@ pattern = { prefix = "/reports/" }
 backend = "fastcgi"
 priority = 90
 ```
-
-## 制限事項と今後の計画
-
-### 現在の制限事項
-
-- **FastCGI接続プーリング**: 未実装（毎リクエスト新規接続）
-- **Unix Socket**: PHP-FPM Unixソケット接続は未実装（TCP接続のみ）
-
-### 今後の機能
-
-- [ ] **Connection Pooling** - FastCGI接続の再利用
-- [ ] **Unix Socket対応** - PHP-FPM Unixソケット接続
-- [ ] **HTTP Proxy Backend** - リバースプロキシ機能
-- [ ] **Admin Console Phase 2** - ログビューア、メトリクスグラフ、WAF管理、設定変更UI
-- [ ] **圧縮対応** - gzip/brotli
-- [ ] **Range Request** - HTTP 206 Partial Content対応
-
-## 貢献
-
-プルリクエストを歓迎します。大きな変更を加える場合は、まずissueを開いて変更内容を議論してください。
 
 ### 開発環境のセットアップ
 
