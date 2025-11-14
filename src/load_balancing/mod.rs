@@ -1,11 +1,10 @@
-use anyhow::{Context, Result};
+use anyhow::Result;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::RwLock;
-use tracing::{debug, error, warn};
+use tracing::debug;
 
-/// Simple circuit breaker state
 #[derive(Debug)]
 enum CircuitState {
     Closed,
@@ -13,7 +12,6 @@ enum CircuitState {
     HalfOpen,
 }
 
-/// Simple circuit breaker implementation
 struct SimpleCircuitBreaker {
     state: Arc<RwLock<CircuitState>>,
     failure_count: Arc<AtomicUsize>,
@@ -81,7 +79,6 @@ impl SimpleCircuitBreaker {
     }
 }
 
-/// Load balancing manager with health checks and circuit breakers
 pub struct LoadBalancingManager {
     upstreams: Arc<RwLock<Vec<UpstreamServer>>>,
     algorithm: LoadBalancingAlgorithm,
@@ -89,7 +86,6 @@ pub struct LoadBalancingManager {
 }
 
 impl LoadBalancingManager {
-    /// Create a new load balancing manager
     pub fn new(
         upstreams: Vec<crate::config::UpstreamConfig>,
         algorithm: crate::config::LoadBalancingAlgorithm,
@@ -128,11 +124,9 @@ impl LoadBalancingManager {
         })
     }
 
-    /// Select the next upstream server based on the configured algorithm
     pub async fn select_upstream(&self) -> Result<UpstreamServer> {
         let upstreams = self.upstreams.read().await;
 
-        // Filter healthy and enabled upstreams
         let available: Vec<&UpstreamServer> = upstreams
             .iter()
             .filter(|u| u.enabled && u.is_healthy())
@@ -165,7 +159,6 @@ impl LoadBalancingManager {
         Ok(selected.clone())
     }
 
-    /// Select upstream using weighted round-robin
     fn select_weighted<'a>(&self, available: &[&'a UpstreamServer]) -> &'a UpstreamServer {
         let total_weight: u32 = available.iter().map(|u| u.weight).sum();
         let mut target = (self.round_robin_counter.fetch_add(1, Ordering::Relaxed) as u32) % total_weight;
@@ -180,7 +173,6 @@ impl LoadBalancingManager {
         available[0]
     }
 
-    /// Mark an upstream as healthy or unhealthy
     pub async fn update_health(&self, name: &str, healthy: bool) {
         let mut upstreams = self.upstreams.write().await;
         if let Some(upstream) = upstreams.iter_mut().find(|u| u.name == name) {
@@ -189,7 +181,6 @@ impl LoadBalancingManager {
         }
     }
 
-    /// Get status of all upstreams
     pub async fn get_upstreams_status(&self) -> Vec<UpstreamStatus> {
         let upstreams = self.upstreams.read().await;
         upstreams
@@ -206,7 +197,6 @@ impl LoadBalancingManager {
             .collect()
     }
 
-    /// Start health check background task
     pub async fn start_health_checks(
         &self,
         health_check_config: crate::config::HealthCheckConfig,
@@ -248,7 +238,6 @@ impl LoadBalancingManager {
                         }
                     };
 
-                    // Update health status based on thresholds
                     if success {
                         upstream.consecutive_successes.fetch_add(1, Ordering::Relaxed);
                         upstream.consecutive_failures.store(0, Ordering::Relaxed);
@@ -280,7 +269,6 @@ pub enum LoadBalancingAlgorithm {
     Random,
 }
 
-/// Represents an upstream server
 #[derive(Clone)]
 pub struct UpstreamServer {
     pub name: String,
@@ -348,7 +336,6 @@ impl UpstreamServer {
         }
     }
 
-    /// Execute a request through the circuit breaker
     pub async fn call_with_circuit_breaker<F, Fut, T>(
         &self,
         f: F,
@@ -357,16 +344,13 @@ impl UpstreamServer {
         F: FnOnce() -> Fut,
         Fut: std::future::Future<Output = Result<T>>,
     {
-        // Try to reset if timeout has elapsed
         self.circuit_breaker.try_reset().await;
 
-        // Check if circuit is open
         if self.circuit_breaker.is_open().await {
             self.record_request(false);
             anyhow::bail!("Circuit breaker is open for upstream '{}'", self.name);
         }
 
-        // Execute the function
         match f().await {
             Ok(result) => {
                 self.circuit_breaker.record_success().await;
@@ -399,6 +383,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_round_robin_selection() {
-        // This test would create test upstreams and verify round-robin behavior
+
     }
 }

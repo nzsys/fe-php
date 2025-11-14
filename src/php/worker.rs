@@ -14,9 +14,9 @@ pub struct WorkerPoolConfig {
 
 pub struct WorkerPool {
     request_tx: Sender<(PhpRequest, Sender<Result<PhpResponse>>)>,
-    config: WorkerPoolConfig,
+    _config: WorkerPoolConfig,
     _php_module: Option<PhpExecutor>,  // Keep PHP module initialized for process lifetime
-    shared_ffi: Option<Arc<PhpFfi>>,   // Shared FFI instance for all workers
+    _shared_ffi: Option<Arc<PhpFfi>>,   // Shared FFI instance for all workers
 }
 
 impl WorkerPool {
@@ -28,10 +28,28 @@ impl WorkerPool {
         // try to call php_module_startup() simultaneously
         let (php_module, shared_ffi) = if !php_config.use_fpm {
             info!("Initializing PHP module for {} worker(s)...", config.pool_size);
-            let module = PhpExecutor::new(php_config.clone())?;
-            let ffi = module.get_shared_ffi();
-            info!("PHP module initialized successfully");
-            (Some(module), ffi)
+
+            // Detect hybrid mode: both embedded and FPM configured
+            let is_hybrid = !php_config.fpm_socket.is_empty();
+
+            match PhpExecutor::new(php_config.clone()) {
+                Ok(module) => {
+                    let ffi = module.get_shared_ffi();
+                    info!("PHP module initialized successfully");
+                    (Some(module), ffi)
+                }
+                Err(e) if is_hybrid => {
+                    // In hybrid mode, libphp loading failure is not fatal
+                    // The server can continue with only FastCGI backend
+                    warn!("Failed to load libphp in hybrid mode: {}", e);
+                    warn!("Continuing with FastCGI-only mode");
+                    (None, None)
+                }
+                Err(e) => {
+                    // In non-hybrid embedded mode, this is a fatal error
+                    return Err(e);
+                }
+            }
         } else {
             (None, None)  // PHP-FPM mode doesn't need global initialization
         };
@@ -60,9 +78,9 @@ impl WorkerPool {
 
         Ok(Self {
             request_tx,
-            config,
+            _config: config,
             _php_module: php_module,  // Kept alive for process lifetime
-            shared_ffi,               // Kept alive and shared with all workers
+            _shared_ffi: shared_ffi,  // Kept alive and shared with all workers
         })
     }
 
@@ -140,6 +158,12 @@ impl WorkerPool {
             .recv()
             .await
             .map_err(|e| anyhow::anyhow!("Failed to receive response from worker: {}", e))?
+    }
+
+    /// Get the shared PHP executor (for hybrid backend system)
+    /// Returns None if using PHP-FPM mode
+    pub fn executor(&self) -> Option<&PhpExecutor> {
+        self._php_module.as_ref()
     }
 }
 

@@ -4,7 +4,6 @@ use anyhow::Result;
 pub fn validate_config(config: &Config) -> Result<Vec<String>> {
     let mut warnings = Vec::new();
 
-    // Validate server config
     if config.server.port < 1024 {
         warnings.push(format!(
             "[!] Port {} requires root privileges. Consider using a port >= 1024",
@@ -24,12 +23,32 @@ pub fn validate_config(config: &Config) -> Result<Vec<String>> {
         ));
     }
 
-    // Validate PHP config
-    if !config.php.libphp_path.exists() {
-        warnings.push(format!(
-            "[X] libphp.so not found at: {}",
-            config.php.libphp_path.display()
-        ));
+    if config.backend.enable_hybrid {
+        if !config.php.libphp_path.exists() {
+            warnings.push(format!(
+                "[i] libphp.so not found at: {}. Embedded backend will not be available (FastCGI/Static only mode)",
+                config.php.libphp_path.display()
+            ));
+        }
+        if config.php.fpm_socket.is_empty() {
+            warnings.push("[i] fpm_socket not configured. FastCGI backend will not be available (Embedded/Static only mode)".to_string());
+        }
+        if !config.php.libphp_path.exists() && config.php.fpm_socket.is_empty() && !config.backend.static_files.enable {
+            warnings.push("[X] Hybrid mode enabled but no backends available. Configure at least one: libphp_path, fpm_socket, or static_files".to_string());
+        }
+    } else {
+        if config.php.use_fpm {
+            if config.php.fpm_socket.is_empty() {
+                warnings.push("[X] PHP-FPM mode enabled but fpm_socket is not configured".to_string());
+            }
+        } else {
+            if !config.php.libphp_path.exists() {
+                warnings.push(format!(
+                    "[X] libphp.so not found at: {}",
+                    config.php.libphp_path.display()
+                ));
+            }
+        }
     }
 
     if !config.php.document_root.exists() {
@@ -47,7 +66,6 @@ pub fn validate_config(config: &Config) -> Result<Vec<String>> {
         warnings.push("[!] Worker max requests is 0. Workers will never restart.".to_string());
     }
 
-    // Validate logging
     if !["trace", "debug", "info", "warn", "error"].contains(&config.logging.level.as_str()) {
         warnings.push(format!(
             "[X] Invalid log level: {}. Must be one of: trace, debug, info, warn, error",
@@ -62,10 +80,7 @@ pub fn validate_config(config: &Config) -> Result<Vec<String>> {
         ));
     }
 
-    // Validate WAF
     if config.waf.enable {
-        // Note: WafMode is now an enum, so invalid values are caught at deserialization time
-        // No need to validate the mode value here
 
         if let Some(ref rules_path) = config.waf.rules_path {
             if !rules_path.exists() {
@@ -81,7 +96,6 @@ pub fn validate_config(config: &Config) -> Result<Vec<String>> {
         }
     }
 
-    // Validate admin
     if config.admin.enable {
         if let Some(parent) = config.admin.unix_socket.parent() {
             if !parent.exists() {
@@ -101,12 +115,10 @@ pub fn validate_config(config: &Config) -> Result<Vec<String>> {
         }
     }
 
-    // Port conflicts
     if config.metrics.port == config.server.port {
         warnings.push("[X] Metrics port conflicts with server port".to_string());
     }
 
-    // Generate recommendations
     if config.php.opcache.enable && config.php.opcache.validate_timestamps {
         warnings.push(
             "[*] Recommendation: Disable opcache.validate_timestamps in production for better performance".to_string()

@@ -35,14 +35,10 @@ pub struct PhpExecutor {
 }
 
 impl PhpExecutor {
-    /// Create executor with full PHP module initialization (call module_startup)
-    /// This should be called once globally, and returns the shared PhpFfi instance
     pub fn new(config: PhpConfig) -> Result<Self> {
         let (ffi, fastcgi) = if config.use_fpm {
-            // Use PHP-FPM via FastCGI
             (None, Some(FastCgiClient::new(config.fpm_socket.clone())))
         } else {
-            // Use libphp and initialize PHP module
             let ffi = PhpFfi::load(&config.libphp_path)?;
             ffi.module_startup()
                 .context("PHP module startup failed - check PHP installation and configuration")?;
@@ -58,14 +54,10 @@ impl PhpExecutor {
         })
     }
 
-    /// Create executor using shared PhpFfi instance (for worker threads)
-    /// This avoids multiple library loads and module initialization
     pub fn new_worker(config: PhpConfig, shared_ffi: Option<Arc<PhpFfi>>) -> Result<Self> {
         let (ffi, fastcgi) = if config.use_fpm {
-            // Use PHP-FPM via FastCGI
             (None, Some(FastCgiClient::new(config.fpm_socket.clone())))
         } else {
-            // Use shared PhpFfi instance (no need to load or initialize)
             (shared_ffi, None)
         };
 
@@ -78,21 +70,16 @@ impl PhpExecutor {
         })
     }
 
-    /// Get the shared PhpFfi instance (for passing to workers)
     pub fn get_shared_ffi(&self) -> Option<Arc<PhpFfi>> {
         self.ffi.clone()
     }
 
-    /// Initialize TSRM thread-local resources for the current worker thread (ZTS only)
-    /// This MUST be called once by each worker thread before processing requests
     pub fn thread_init(&self) {
         if let Some(ffi) = &self.ffi {
             ffi.thread_init();
         }
     }
 
-    /// Free TSRM thread-local resources for the current worker thread (ZTS only)
-    /// This MUST be called when a worker thread exits
     pub fn thread_cleanup(&self) {
         if let Some(ffi) = &self.ffi {
             ffi.thread_cleanup();
@@ -102,16 +89,13 @@ impl PhpExecutor {
     pub fn execute(&self, request: PhpRequest) -> Result<PhpResponse> {
         let start = std::time::Instant::now();
 
-        // Determine script path from URI
         let script_path = self.resolve_script_path(&request.uri)?;
 
         if self.use_fpm {
-            // Execute via PHP-FPM
             let fastcgi = self.fastcgi.as_ref()
                 .ok_or_else(|| anyhow::anyhow!("FastCGI client not initialized"))?;
 
-            // Use tokio's block_in_place to run async code in blocking context
-            let (stdout, stderr) = tokio::task::block_in_place(|| {
+            let (stdout, _stderr) = tokio::task::block_in_place(|| {
                 tokio::runtime::Handle::current().block_on(
                     fastcgi.execute(
                         script_path.to_str()
@@ -128,7 +112,6 @@ impl PhpExecutor {
 
             let execution_time_ms = start.elapsed().as_millis() as u64;
 
-            // Parse FastCGI response (HTTP headers + body)
             let (status_code, headers, body) = self.parse_fastcgi_response(&stdout)?;
 
             Ok(PhpResponse {
@@ -139,15 +122,12 @@ impl PhpExecutor {
                 memory_peak_mb: 0.0,
             })
         } else {
-            // Execute via embedded libphp (high performance mode)
             let ffi = self.ffi.as_ref()
                 .ok_or_else(|| anyhow::anyhow!("PHP FFI not initialized"))?;
 
-            // Start request
             ffi.request_startup()
                 .context("Failed to start PHP request")?;
 
-            // Execute script
             let script_path_str = script_path.to_str()
                 .ok_or_else(|| anyhow::anyhow!("Script path contains invalid UTF-8"))?;
             let output = match ffi.execute_script(script_path_str) {
@@ -158,12 +138,10 @@ impl PhpExecutor {
                 }
             };
 
-            // Shutdown request
             ffi.request_shutdown();
 
             let execution_time_ms = start.elapsed().as_millis() as u64;
 
-            // Parse output for headers (PHP can output headers)
             let (status_code, headers, body) = self.parse_php_output(&output)?;
 
             Ok(PhpResponse {
@@ -176,12 +154,8 @@ impl PhpExecutor {
         }
     }
 
-    /// Parse PHP output (handles both raw output and headers)
     fn parse_php_output(&self, data: &[u8]) -> Result<(u16, HashMap<String, String>, Vec<u8>)> {
-        // Check if output contains headers (starts with header line)
-        // PHP can output headers using header() function
         if data.len() < 4 || !data.starts_with(b"HTTP/") && !data.starts_with(b"Status:") && !data.starts_with(b"Content-Type:") {
-            // No headers, just body content
             let mut headers = HashMap::new();
             headers.insert("Content-Type".to_string(), "text/html; charset=UTF-8".to_string());
             return Ok((200, headers, data.to_vec()));
@@ -190,35 +164,26 @@ impl PhpExecutor {
         self.parse_headers_and_body(data)
     }
 
-    /// Parse headers and body from raw output (optimized with memchr)
     fn parse_headers_and_body(&self, data: &[u8]) -> Result<(u16, HashMap<String, String>, Vec<u8>)> {
         let mut status_code = 200u16;
         let mut headers = HashMap::with_capacity(8); // Pre-allocate for typical header count
-        let mut body_start = 0;
 
-        // Find header/body separator using fast memmem search
-        let separator: &[u8];
-        if let Some(pos) = memmem::find(data, b"\r\n\r\n") {
-            body_start = pos + 4;
-            separator = b"\r\n";
+        let (separator, body_start) = if let Some(pos) = memmem::find(data, b"\r\n\r\n") {
+            (b"\r\n" as &[u8], pos + 4)
         } else if let Some(pos) = memmem::find(data, b"\n\n") {
-            body_start = pos + 2;
-            separator = b"\n";
+            (b"\n" as &[u8], pos + 2)
         } else {
-            // No separator found, treat all as body
             let mut headers = HashMap::with_capacity(1);
             headers.insert("Content-Type".to_string(), "text/html; charset=UTF-8".to_string());
             return Ok((200, headers, data.to_vec()));
         };
 
-        // Parse headers
         let header_data = &data[..body_start];
         for line in header_data.split(|&b| b == separator[0]) {
             if line.is_empty() {
                 continue;
             }
 
-            // Convert to string for parsing
             let line_str = String::from_utf8_lossy(line);
 
             if let Some((name, value)) = line_str.split_once(':') {
@@ -226,7 +191,6 @@ impl PhpExecutor {
                 let value = value.trim();
 
                 if name.eq_ignore_ascii_case("Status") {
-                    // Parse status code from "Status: 200 OK"
                     if let Some(code_str) = value.split_whitespace().next() {
                         status_code = code_str.parse().unwrap_or_else(|e| {
                             tracing::warn!("Failed to parse status code '{}': {}, defaulting to 200", code_str, e);
@@ -239,12 +203,10 @@ impl PhpExecutor {
             }
         }
 
-        // Ensure Content-Type header exists
         if !headers.contains_key("Content-Type") && !headers.contains_key("content-type") {
             headers.insert("Content-Type".to_string(), "text/html; charset=UTF-8".to_string());
         }
 
-        // Extract body (zero-copy slice)
         let body = if body_start < data.len() {
             data[body_start..].to_vec()
         } else {
@@ -255,18 +217,14 @@ impl PhpExecutor {
     }
 
     fn parse_fastcgi_response(&self, data: &[u8]) -> Result<(u16, HashMap<String, String>, Vec<u8>)> {
-        // Reuse the same parser for FastCGI responses
         self.parse_headers_and_body(data)
     }
 
     fn resolve_script_path(&self, uri: &str) -> Result<PathBuf> {
-        // Remove query string
         let path = uri.split('?').next().unwrap_or(uri);
 
-        // Remove leading slash
         let path = path.trim_start_matches('/');
 
-        // Default to index.php if path is empty or is a directory
         let path = if path.is_empty() || path.ends_with('/') {
             format!("{}index.php", path)
         } else if !path.ends_with(".php") {
@@ -277,8 +235,6 @@ impl PhpExecutor {
 
         let script_path = self.document_root.join(path);
 
-        // Security: ensure path is within document root
-        // canonicalize() must succeed to prevent path traversal attacks
         let canonical = script_path.canonicalize()
             .with_context(|| format!(
                 "Failed to canonicalize script path '{}' - file may not exist or insufficient permissions",
@@ -304,7 +260,6 @@ impl PhpExecutor {
 impl Drop for PhpExecutor {
     fn drop(&mut self) {
         if let Some(ffi) = &self.ffi {
-            // Only call module_shutdown if we called module_startup
             if !self.skip_module_lifecycle {
                 let _ = ffi.module_shutdown();
             }
@@ -327,10 +282,6 @@ mod tests {
             fpm_socket: String::from("127.0.0.1:9000"),
         };
 
-        // Note: This test would fail because PhpExecutor::new requires actual libphp.so
-        // In real implementation, we'd mock this or use dependency injection
-
-        // Test path resolution logic separately
         let uri = "/test.php";
         assert!(uri.trim_start_matches('/') == "test.php");
     }

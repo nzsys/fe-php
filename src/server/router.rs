@@ -2,7 +2,7 @@ use crate::config::Config;
 use crate::php::{WorkerPool, PhpRequest};
 use crate::metrics::MetricsCollector;
 use anyhow::Result;
-use hyper::{Request, Response, body::Incoming, StatusCode};
+use hyper::{Request, Response, StatusCode};
 use http_body_util::BodyExt;
 use std::collections::HashMap;
 use std::net::SocketAddr;

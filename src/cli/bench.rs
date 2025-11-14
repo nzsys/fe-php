@@ -6,19 +6,15 @@ use tracing::info;
 
 #[derive(Args)]
 pub struct BenchArgs {
-    /// Target URL to benchmark
     #[arg(short, long, default_value = "http://localhost:8080")]
     pub url: String,
 
-    /// Duration in seconds
     #[arg(short, long, default_value = "60")]
     pub duration: u64,
 
-    /// Target requests per second
     #[arg(short, long, default_value = "100")]
     pub rps: u64,
 
-    /// Number of concurrent workers
     #[arg(short = 'c', long, default_value = "10")]
     pub concurrency: usize,
 }
@@ -41,7 +37,6 @@ pub async fn run(args: BenchArgs) -> Result<()> {
     let mut successful_requests = 0u64;
     let mut failed_requests = 0u64;
 
-    // Simple benchmark loop
     while start_time.elapsed() < duration {
         let req_start = Instant::now();
 
@@ -62,7 +57,6 @@ pub async fn run(args: BenchArgs) -> Result<()> {
         histogram.record(latency)?;
         total_requests += 1;
 
-        // Rate limiting
         let target_interval = Duration::from_millis(1000 / args.rps);
         if let Some(sleep_time) = target_interval.checked_sub(req_start.elapsed()) {
             tokio::time::sleep(sleep_time).await;
@@ -72,7 +66,6 @@ pub async fn run(args: BenchArgs) -> Result<()> {
     let actual_duration = start_time.elapsed().as_secs_f64();
     let actual_rps = total_requests as f64 / actual_duration;
 
-    // Print results
     println!("=== Benchmark Results ===");
     println!("Duration: {:.2}s", actual_duration);
     println!("Target RPS: {}", args.rps);

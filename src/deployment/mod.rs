@@ -13,7 +13,6 @@ pub use canary::CanaryDeploymentManager;
 
 use crate::config::{DeploymentConfig, DeploymentStrategy};
 
-/// Unified deployment manager that handles both A/B testing and canary deployments
 pub struct DeploymentManager {
     traffic_splitter: Arc<TrafficSplitter>,
     ab_test: Option<Arc<RwLock<AbTestManager>>>,
@@ -21,7 +20,6 @@ pub struct DeploymentManager {
 }
 
 impl DeploymentManager {
-    /// Create a new deployment manager from configuration
     pub fn new(config: &DeploymentConfig) -> Result<Self> {
         let traffic_splitter = Arc::new(TrafficSplitter::new(
             config.variants.clone(),
@@ -57,12 +55,10 @@ impl DeploymentManager {
         })
     }
 
-    /// Get the traffic splitter
     pub fn traffic_splitter(&self) -> Arc<TrafficSplitter> {
         self.traffic_splitter.clone()
     }
 
-    /// Record a request result for metrics
     pub async fn record_request(
         &self,
         variant_name: &str,
@@ -78,7 +74,6 @@ impl DeploymentManager {
         }
     }
 
-    /// Get deployment statistics
     pub async fn get_stats(&self) -> DeploymentStats {
         let ab_stats = if let Some(ref ab_test) = self.ab_test {
             Some(ab_test.read().await.get_stats())
@@ -98,7 +93,6 @@ impl DeploymentManager {
         }
     }
 
-    /// Start background tasks (auto-promotion, rollback monitoring)
     pub async fn start_background_tasks(self: Arc<Self>) {
         if let Some(ref canary) = self.canary {
             let canary_clone = canary.clone();

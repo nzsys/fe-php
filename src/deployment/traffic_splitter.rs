@@ -1,4 +1,4 @@
-use anyhow::{Context, Result};
+use anyhow::Result;
 use std::collections::HashMap;
 use std::net::IpAddr;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -7,7 +7,6 @@ use tracing::debug;
 
 use crate::config::VariantConfig;
 
-/// Traffic splitter that routes requests to different variants based on weights
 pub struct TrafficSplitter {
     variants: Vec<VariantConfig>,
     total_weight: u32,
@@ -18,7 +17,6 @@ pub struct TrafficSplitter {
 }
 
 impl TrafficSplitter {
-    /// Create a new traffic splitter
     pub fn new(variants: Vec<VariantConfig>, sticky_sessions: bool) -> Result<Self> {
         let total_weight: u32 = variants.iter().map(|v| v.weight).sum();
 
@@ -35,17 +33,13 @@ impl TrafficSplitter {
         })
     }
 
-    /// Select a variant for the given request
     pub fn select_variant(&self, user_id: Option<&str>, ip_addr: Option<IpAddr>) -> &VariantConfig {
-        // If sticky sessions enabled, check for existing assignment
         if self.sticky_sessions {
-            // Determine identifier - prefer user_id, fallback to IP
             let identifier: Option<String> = user_id
                 .map(|s| s.to_string())
                 .or_else(|| ip_addr.map(|ip| ip.to_string()));
 
             if let Some(id) = identifier {
-                // Check if user already has an assignment
                 {
                     let assignments = self.user_assignments.read();
                     if let Some(variant_name) = assignments.get(&id) {
@@ -56,18 +50,15 @@ impl TrafficSplitter {
                     }
                 }
 
-                // Assign new variant
                 let variant = self.select_by_weight();
                 self.user_assignments.write().insert(id, variant.name.clone());
                 return variant;
             }
         }
 
-        // No sticky sessions or no identifier - use weight-based selection
         self.select_by_weight()
     }
 
-    /// Select a variant based on weights using weighted round-robin
     fn select_by_weight(&self) -> &VariantConfig {
         let counter = self.round_robin_counter.fetch_add(1, Ordering::Relaxed);
         let mut target = (counter as u32) % self.total_weight;
@@ -79,11 +70,9 @@ impl TrafficSplitter {
             target -= variant.weight;
         }
 
-        // Fallback to first variant
         &self.variants[0]
     }
 
-    /// Update variant weights dynamically
     pub fn update_weights(&mut self, new_weights: HashMap<String, u32>) {
         for variant in &mut self.variants {
             if let Some(&new_weight) = new_weights.get(&variant.name) {
@@ -93,7 +82,6 @@ impl TrafficSplitter {
         self.total_weight = self.variants.iter().map(|v| v.weight).sum();
     }
 
-    /// Get current variant weights
     pub fn get_weights(&self) -> HashMap<String, u32> {
         self.variants
             .iter()
@@ -101,12 +89,10 @@ impl TrafficSplitter {
             .collect()
     }
 
-    /// Clear sticky session assignments
     pub fn clear_sticky_sessions(&self) {
         self.user_assignments.write().clear();
     }
 
-    /// Get number of sticky session assignments
     pub fn sticky_session_count(&self) -> usize {
         self.user_assignments.read().len()
     }
@@ -135,7 +121,6 @@ mod tests {
 
         let splitter = TrafficSplitter::new(variants, false).unwrap();
 
-        // Test distribution over many requests
         let mut counts = HashMap::new();
         for _ in 0..1000 {
             let variant = splitter.select_variant(None, None);
@@ -145,7 +130,6 @@ mod tests {
         let v1_count = counts.get("v1").unwrap_or(&0);
         let v2_count = counts.get("v2").unwrap_or(&0);
 
-        // Should be roughly 70/30 split (with some variance)
         assert!(*v1_count > 600 && *v1_count < 800);
         assert!(*v2_count > 200 && *v2_count < 400);
     }

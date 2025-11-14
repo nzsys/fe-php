@@ -1,6 +1,7 @@
 pub mod config;
 pub mod server;
 pub mod php;
+pub mod backend;
 pub mod waf;
 pub mod metrics;
 pub mod logging;

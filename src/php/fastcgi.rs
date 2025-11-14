@@ -1,12 +1,13 @@
-use anyhow::{Context, Result};
+use anyhow::Result;
 use bytes::{BufMut, BytesMut};
 use std::collections::HashMap;
+use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::TcpStream;
+use super::connection_pool::{ConnectionPool, FastCgiStream, PoolConfig};
 
-// FastCGI constants
 const FCGI_VERSION_1: u8 = 1;
 const FCGI_BEGIN_REQUEST: u8 = 1;
+#[allow(dead_code)]
 const FCGI_ABORT_REQUEST: u8 = 2;
 const FCGI_END_REQUEST: u8 = 3;
 const FCGI_PARAMS: u8 = 4;
@@ -15,16 +16,26 @@ const FCGI_STDOUT: u8 = 6;
 const FCGI_STDERR: u8 = 7;
 
 const FCGI_RESPONDER: u16 = 1;
+#[allow(dead_code)]
 const FCGI_KEEP_CONN: u8 = 1;
 
 #[derive(Debug)]
 pub struct FastCgiClient {
-    address: String,
+    pool: Arc<ConnectionPool>,
 }
 
 impl FastCgiClient {
     pub fn new(address: String) -> Self {
-        Self { address }
+        let config = PoolConfig::default();
+        Self {
+            pool: Arc::new(ConnectionPool::new(address, config)),
+        }
+    }
+
+    pub fn with_pool_config(address: String, config: PoolConfig) -> Self {
+        Self {
+            pool: Arc::new(ConnectionPool::new(address, config)),
+        }
     }
 
     pub async fn execute(
@@ -37,29 +48,23 @@ impl FastCgiClient {
         body: &[u8],
         remote_addr: &str,
     ) -> Result<(Vec<u8>, Vec<u8>)> {
-        // Connect to PHP-FPM
-        let mut stream = TcpStream::connect(&self.address)
-            .await
-            .with_context(|| format!("Failed to connect to PHP-FPM at {}", self.address))?;
+        let mut pooled_conn = self.pool.get().await?;
+        let stream = pooled_conn.stream();
 
         let request_id = 1u16;
 
-        // Send BEGIN_REQUEST
         let begin_request = self.build_begin_request(request_id);
         stream.write_all(&begin_request).await?;
 
-        // Build and send PARAMS
         let params = self.build_params(script_path, method, uri, query_string, headers, remote_addr);
         let params_records = self.build_params_records(request_id, &params);
         for record in params_records {
             stream.write_all(&record).await?;
         }
 
-        // Send empty PARAMS to signal end
         let empty_params = self.build_record(FCGI_PARAMS, request_id, &[]);
         stream.write_all(&empty_params).await?;
 
-        // Send STDIN (request body)
         if !body.is_empty() {
             let stdin_records = self.build_data_records(FCGI_STDIN, request_id, body);
             for record in stdin_records {
@@ -67,12 +72,12 @@ impl FastCgiClient {
             }
         }
 
-        // Send empty STDIN to signal end
         let empty_stdin = self.build_record(FCGI_STDIN, request_id, &[]);
         stream.write_all(&empty_stdin).await?;
 
-        // Read response
-        let (stdout, stderr) = self.read_response(&mut stream, request_id).await?;
+        let (stdout, stderr) = self.read_response(stream, request_id).await?;
+
+        self.pool.put(pooled_conn).await;
 
         Ok((stdout, stderr))
     }
@@ -80,7 +85,6 @@ impl FastCgiClient {
     fn build_begin_request(&self, request_id: u16) -> Vec<u8> {
         let mut buf = BytesMut::with_capacity(16);
 
-        // Header
         buf.put_u8(FCGI_VERSION_1);
         buf.put_u8(FCGI_BEGIN_REQUEST);
         buf.put_u16(request_id);
@@ -88,7 +92,6 @@ impl FastCgiClient {
         buf.put_u8(0);  // padding length
         buf.put_u8(0);  // reserved
 
-        // Body
         buf.put_u16(FCGI_RESPONDER);
         buf.put_u8(0);  // flags (no keep-alive for simplicity)
         buf.put(&[0u8; 5][..]); // reserved
@@ -118,7 +121,6 @@ impl FastCgiClient {
         params.insert("SERVER_PROTOCOL".to_string(), "HTTP/1.1".to_string());
         params.insert("GATEWAY_INTERFACE".to_string(), "CGI/1.1".to_string());
 
-        // Add HTTP headers
         for (name, value) in headers {
             let name_upper = name.to_uppercase().replace("-", "_");
             let param_name = if name_upper == "CONTENT_TYPE" || name_upper == "CONTENT_LENGTH" {
@@ -146,14 +148,12 @@ impl FastCgiClient {
         let name_bytes = name.as_bytes();
         let value_bytes = value.as_bytes();
 
-        // Encode name length
         if name_bytes.len() < 128 {
             buf.put_u8(name_bytes.len() as u8);
         } else {
             buf.put_u32((name_bytes.len() as u32) | 0x80000000);
         }
 
-        // Encode value length
         if value_bytes.len() < 128 {
             buf.put_u8(value_bytes.len() as u8);
         } else {
@@ -202,12 +202,11 @@ impl FastCgiClient {
         buf.to_vec()
     }
 
-    async fn read_response(&self, stream: &mut TcpStream, expected_request_id: u16) -> Result<(Vec<u8>, Vec<u8>)> {
+    async fn read_response(&self, stream: &mut FastCgiStream, expected_request_id: u16) -> Result<(Vec<u8>, Vec<u8>)> {
         let mut stdout_data = Vec::new();
         let mut stderr_data = Vec::new();
 
         loop {
-            // Read record header (8 bytes)
             let mut header = [0u8; 8];
             match stream.read_exact(&mut header).await {
                 Ok(_) => {},
@@ -226,20 +225,17 @@ impl FastCgiClient {
             }
 
             if request_id != expected_request_id {
-                // Skip this record
                 let total_skip = content_length + padding_length;
                 let mut discard = vec![0u8; total_skip];
                 stream.read_exact(&mut discard).await?;
                 continue;
             }
 
-            // Read content
             let mut content = vec![0u8; content_length];
             if content_length > 0 {
                 stream.read_exact(&mut content).await?;
             }
 
-            // Read padding
             if padding_length > 0 {
                 let mut padding = vec![0u8; padding_length];
                 stream.read_exact(&mut padding).await?;

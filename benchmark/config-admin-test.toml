@@ -1,0 +1,26 @@
+[server]
+host = "0.0.0.0"
+port = 8080
+workers = 2
+
+[php]
+libphp_path = "/opt/homebrew/Cellar/php/8.4.14_1/lib/httpd/modules/libphp.so"
+document_root = "/Users/nzsys/Web"
+worker_max_requests = 0
+use_fpm = true
+fpm_socket = "127.0.0.1:9000"
+
+[logging]
+level = "info"
+format = "pretty"
+output = "stdout"
+
+[metrics]
+enable = true
+port = 9001
+
+[admin]
+enable = true
+host = "127.0.0.1"
+http_port = 9002
+allowed_ips = ["127.0.0.1"]

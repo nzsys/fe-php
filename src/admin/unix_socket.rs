@@ -13,7 +13,6 @@ impl UnixSocketServer {
     }
 
     pub async fn serve(self) -> Result<()> {
-        // Remove existing socket if it exists
         if self.socket_path.exists() {
             std::fs::remove_file(&self.socket_path)?;
         }
@@ -23,10 +22,8 @@ impl UnixSocketServer {
 
         loop {
             match listener.accept().await {
-                Ok((stream, _addr)) => {
+                Ok((_stream, _addr)) => {
                     tokio::spawn(async move {
-                        // Handle socket connection
-                        // In a real implementation, we'd parse commands and execute them
                         info!("Unix socket connection accepted");
                     });
                 }

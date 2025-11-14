@@ -1,0 +1,45 @@
+# fe-php Hybrid Mode - Port 8084
+# Uses both Embedded (libphp) and FastCGI (PHP-FPM)
+# Routing: All .php files -> Embedded (fastest)
+
+[server]
+host = "0.0.0.0"
+port = 8084
+workers = 4
+
+[php]
+libphp_path = "/usr/local/php-zts-embed/lib/libphp.dylib"
+document_root = "/Users/nzsys/Web"
+worker_max_requests = 0
+use_fpm = false
+fpm_socket = "127.0.0.1:9000"
+
+[php.opcache]
+enable = true
+memory_size = "256M"
+max_files = 10000
+validate_timestamps = false
+
+[logging]
+level = "warn"
+format = "json"
+output = "stdout"
+
+[metrics]
+enable = false
+
+[waf]
+enable = false
+
+[backend]
+enable_hybrid = true
+default_backend = "embedded"
+
+[backend.static_files]
+enable = false
+
+# Route all PHP files to embedded backend (fastest)
+[[backend.routing_rules]]
+pattern = { type = "suffix", value = ".php" }
+backend = "embedded"
+priority = 90
