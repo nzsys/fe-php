@@ -17,6 +17,7 @@ Thumbs.db
 
 # Config backups
 ~/.fe-php/
+/examples/local_config.toml
 
 # Logs
 *.log

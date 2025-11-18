@@ -4,6 +4,7 @@ pub mod multiprocess;
 pub mod shutdown;
 pub mod http_redirect;
 pub mod ip_filter;
+pub mod ip_blocker;
 pub mod cors;
 pub mod compression;
 pub mod range;
@@ -21,7 +22,9 @@ use crate::redis_session::RedisSessionManager;
 use crate::tracing_telemetry::TracingManager;
 use crate::load_balancing::LoadBalancingManager;
 use crate::deployment::DeploymentManager;
+use crate::utils::parse_headers;
 use anyhow::{Context, Result};
+use http_body_util::BodyExt;
 use hyper::server::conn::{http1, http2};
 use hyper::service::service_fn;
 use hyper::{Request, Response, body::Incoming};
@@ -45,6 +48,8 @@ pub struct Server {
     _deployment_manager: Option<Arc<DeploymentManager>>,
     waf_engine: Option<Arc<crate::waf::WafEngine>>,
     shutdown_coordinator: Arc<shutdown::ShutdownCoordinator>,
+    ip_blocker: Arc<ip_blocker::IpBlocker>,
+    admin_api: Option<Arc<crate::admin::AdminApi>>,
 }
 
 impl Server {
@@ -262,12 +267,24 @@ impl Server {
             _deployment_manager: deployment_manager,
             waf_engine,
             shutdown_coordinator,
+            ip_blocker: Arc::new(ip_blocker::IpBlocker::new()),
+            admin_api: None,
         })
     }
 
     /// Get a reference to the metrics collector
     pub fn metrics_collector(&self) -> Arc<MetricsCollector> {
         Arc::clone(&self.metrics)
+    }
+
+    /// Set AdminApi for logging
+    pub fn set_admin_api(&mut self, admin_api: Arc<crate::admin::AdminApi>) {
+        self.admin_api = Some(admin_api);
+    }
+
+    /// Get a reference to the IP blocker
+    pub fn ip_blocker(&self) -> Arc<ip_blocker::IpBlocker> {
+        Arc::clone(&self.ip_blocker)
     }
 
     pub async fn serve(self) -> Result<()> {
@@ -346,6 +363,15 @@ impl Server {
                             server.shutdown_coordinator.inc_connections();
 
                             tokio::spawn(async move {
+                                // Check IP blocker (dynamic runtime blocking)
+                                if let Some(ip) = peer_addr.ip() {
+                                    if server.ip_blocker.is_blocked(&ip) {
+                                        debug!("Blocked connection from {} - IP is in blocklist", peer_addr);
+                                        server.shutdown_coordinator.dec_connections();
+                                        return;
+                                    }
+                                }
+
                                 // Check GeoIP filtering
                                 if let Some(ref geoip) = server.geoip_manager {
                                     if let Some(ip) = peer_addr.ip() {
@@ -571,6 +597,7 @@ impl Server {
                         Arc::clone(&self.worker_pool),
                         Arc::clone(&self.metrics),
                         Arc::clone(&self.config),
+                        self.admin_api.clone(),
                     )
                     .await;
                 }
@@ -588,6 +615,7 @@ impl Server {
             Arc::clone(&self.worker_pool),
             Arc::clone(&self.metrics),
             Arc::clone(&self.config),
+            self.admin_api.clone(),
         )
         .await
     }
@@ -632,19 +660,28 @@ impl Server {
         let (parts, body) = req.into_parts();
 
         let body_bytes = match body.collect().await {
-            Ok(collected) => collected.to_bytes().to_vec(),
+            Ok(collected) => {
+                let bytes = collected.to_bytes();
+                // Check body size limit
+                if bytes.len() > crate::utils::MAX_BODY_SIZE {
+                    error!("Request body too large: {} bytes", bytes.len());
+                    self.metrics.dec_active_connections();
+                    return Ok(Response::builder()
+                        .status(413)
+                        .body("Request body too large".to_string())?);
+                }
+                bytes.to_vec()
+            }
             Err(e) => {
                 error!("Failed to read request body: {}", e);
-                vec![]
+                self.metrics.dec_active_connections();
+                return Ok(Response::builder()
+                    .status(400)
+                    .body(format!("Bad Request: {}", e))?);
             }
         };
 
-        let mut headers = HashMap::new();
-        for (name, value) in parts.headers.iter() {
-            if let Ok(value_str) = value.to_str() {
-                headers.insert(name.to_string(), value_str.to_string());
-            }
-        }
+        let headers = parse_headers(&parts.headers);
 
         let query_string = parts.uri.query().unwrap_or("").to_string();
 
@@ -657,21 +694,29 @@ impl Server {
             remote_addr: peer_addr.to_string(),
         };
 
-        // Route to appropriate backend
-        let path = parts.uri.path();
-        let backend = backend_router.route(path);
-
-        debug!("Routing {} to {} backend", path, backend.backend_type());
-
-        // Execute on selected backend
-        let php_response = match backend.execute(php_request) {
+        // Execute on appropriate backend with metrics
+        let php_response = match backend_router.execute_with_metrics(php_request, Some(&self.metrics)) {
             Ok(response) => response,
             Err(e) => {
                 error!("Backend execution failed: {}", e);
                 self.metrics.dec_active_connections();
 
                 let duration = start.elapsed().as_secs_f64();
+                let duration_ms = (duration * 1000.0) as u64;
                 self.metrics.record_request(&method, 500, duration);
+
+                // Send error log to LogAnalyzer
+                if let Some(ref api) = self.admin_api {
+                    let log_analyzer = api.log_analyzer();
+                    let mut analyzer = log_analyzer.write();
+                    analyzer.add_log(crate::logging::structured::RequestLog::new(
+                        method.clone(),
+                        uri.clone(),
+                        500,
+                        duration_ms,
+                        peer_addr.to_string(),
+                    ));
+                }
 
                 return Ok(Response::builder()
                     .status(500)
@@ -680,6 +725,7 @@ impl Server {
         };
 
         let duration = start.elapsed().as_secs_f64();
+        let duration_ms = (duration * 1000.0) as u64;
         self.metrics.record_request(&method, php_response.status_code, duration);
         self.metrics.dec_active_connections();
 
@@ -688,9 +734,21 @@ impl Server {
             uri = %uri,
             status = php_response.status_code,
             duration_ms = php_response.execution_time_ms,
-            backend = %backend.backend_type(),
             "Request completed"
         );
+
+        // Send log to LogAnalyzer if AdminApi is available
+        if let Some(ref api) = self.admin_api {
+            let log_analyzer = api.log_analyzer();
+            let mut analyzer = log_analyzer.write();
+            analyzer.add_log(crate::logging::structured::RequestLog::new(
+                method.clone(),
+                uri.clone(),
+                php_response.status_code,
+                duration_ms,
+                peer_addr.to_string(),
+            ));
+        }
 
         // Build response
         let mut response = Response::builder().status(php_response.status_code);

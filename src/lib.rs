@@ -8,6 +8,8 @@ pub mod logging;
 pub mod admin;
 pub mod cli;
 pub mod utils;
+pub mod monitor;
+pub mod tui;
 
 // Phase 5 & 6 Advanced Features
 pub mod tls;

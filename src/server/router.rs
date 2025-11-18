@@ -2,10 +2,10 @@ use crate::config::Config;
 use crate::php::{WorkerPool, PhpRequest};
 use crate::metrics::MetricsCollector;
 use crate::server::peer_addr::PeerAddr;
+use crate::utils::parse_headers;
 use anyhow::Result;
 use hyper::{Request, Response, StatusCode};
 use http_body_util::BodyExt;
-use std::collections::HashMap;
 use std::sync::Arc;
 use tracing::{info, error};
 
@@ -15,6 +15,7 @@ pub async fn handle_request<B>(
     worker_pool: Arc<WorkerPool>,
     metrics: Arc<MetricsCollector>,
     config: Arc<Config>,
+    admin_api: Option<Arc<crate::admin::AdminApi>>,
 ) -> Result<Response<String>>
 where
     B: hyper::body::Body + Send + 'static,
@@ -24,6 +25,7 @@ where
     let start = std::time::Instant::now();
     let method = req.method().to_string();
     let uri = req.uri().to_string();
+    let remote_addr = peer_addr.to_string();
 
     metrics.inc_active_connections();
 
@@ -43,19 +45,28 @@ where
     let (parts, body) = req.into_parts();
 
     let body_bytes = match body.collect().await {
-        Ok(collected) => collected.to_bytes().to_vec(),
+        Ok(collected) => {
+            let bytes = collected.to_bytes();
+            // Check body size limit
+            if bytes.len() > crate::utils::MAX_BODY_SIZE {
+                error!("Request body too large: {} bytes", bytes.len());
+                metrics.dec_active_connections();
+                return Ok(Response::builder()
+                    .status(StatusCode::PAYLOAD_TOO_LARGE)
+                    .body("Request body too large".to_string())?);
+            }
+            bytes.to_vec()
+        }
         Err(e) => {
             error!("Failed to read request body: {}", e);
-            vec![]
+            metrics.dec_active_connections();
+            return Ok(Response::builder()
+                .status(StatusCode::BAD_REQUEST)
+                .body(format!("Bad Request: {}", e))?);
         }
     };
 
-    let mut headers = HashMap::new();
-    for (name, value) in parts.headers.iter() {
-        if let Ok(value_str) = value.to_str() {
-            headers.insert(name.to_string(), value_str.to_string());
-        }
-    }
+    let headers = parse_headers(&parts.headers);
 
     let query_string = parts.uri.query().unwrap_or("").to_string();
 
@@ -76,7 +87,21 @@ where
             metrics.dec_active_connections();
 
             let duration = start.elapsed().as_secs_f64();
+            let duration_ms = (duration * 1000.0) as u64;
             metrics.record_request(&method, 500, duration);
+
+            // Send error log to LogAnalyzer
+            if let Some(ref api) = admin_api {
+                let log_analyzer = api.log_analyzer();
+                let mut analyzer = log_analyzer.write();
+                analyzer.add_log(crate::logging::structured::RequestLog::new(
+                    method.clone(),
+                    uri.clone(),
+                    500,
+                    duration_ms,
+                    remote_addr.clone(),
+                ));
+            }
 
             return Ok(Response::builder()
                 .status(StatusCode::INTERNAL_SERVER_ERROR)
@@ -85,6 +110,7 @@ where
     };
 
     let duration = start.elapsed().as_secs_f64();
+    let duration_ms = (duration * 1000.0) as u64;
     metrics.record_request(&method, php_response.status_code, duration);
     metrics.dec_active_connections();
 
@@ -95,6 +121,19 @@ where
         duration_ms = php_response.execution_time_ms,
         "Request completed"
     );
+
+    // Send log to LogAnalyzer if AdminApi is available
+    if let Some(ref api) = admin_api {
+        let log_analyzer = api.log_analyzer();
+        let mut analyzer = log_analyzer.write();
+        analyzer.add_log(crate::logging::structured::RequestLog::new(
+            method.clone(),
+            uri.clone(),
+            php_response.status_code,
+            duration_ms,
+            remote_addr.clone(),
+        ));
+    }
 
     // Build response
     let mut response = Response::builder().status(php_response.status_code);

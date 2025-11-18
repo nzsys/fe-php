@@ -98,18 +98,22 @@ impl PooledConnection {
 #[derive(Debug, Clone)]
 pub struct PoolConfig {
     pub max_size: usize,
+    pub min_idle: usize,  // Minimum idle connections to maintain
     pub max_idle_time: Duration,
     pub max_lifetime: Duration,
     pub connect_timeout: Duration,
+    pub enable_tcp_keepalive: bool,
 }
 
 impl Default for PoolConfig {
     fn default() -> Self {
         Self {
             max_size: 20,
+            min_idle: 2,  // Keep at least 2 idle connections ready
             max_idle_time: Duration::from_secs(60),
             max_lifetime: Duration::from_secs(3600),
             connect_timeout: Duration::from_secs(5),
+            enable_tcp_keepalive: true,
         }
     }
 }
@@ -124,11 +128,83 @@ pub struct ConnectionPool {
 
 impl ConnectionPool {
     pub fn new(address: String, config: PoolConfig) -> Self {
+        let pool = Arc::new(Mutex::new(VecDeque::new()));
+        let address_clone = address.clone();
+        let config_clone = config.clone();
+        let pool_clone = Arc::clone(&pool);
+
+        // Spawn background task to warm up the pool with min_idle connections
+        tokio::spawn(async move {
+            Self::warmup_pool(address_clone, config_clone, pool_clone).await;
+        });
+
         Self {
             address,
             config,
-            pool: Arc::new(Mutex::new(VecDeque::new())),
+            pool,
         }
+    }
+
+    async fn warmup_pool(
+        address: String,
+        config: PoolConfig,
+        pool: Arc<Mutex<VecDeque<PooledConnection>>>,
+    ) {
+        debug!("Warming up connection pool with {} connections", config.min_idle);
+
+        for i in 0..config.min_idle {
+            match Self::create_connection(&address, &config).await {
+                Ok(conn) => {
+                    let mut pool = pool.lock().await;
+                    pool.push_back(conn);
+                    debug!("Warmup: created connection {}/{}", i + 1, config.min_idle);
+                }
+                Err(e) => {
+                    debug!("Warmup: failed to create connection {}/{}: {}", i + 1, config.min_idle, e);
+                    break;
+                }
+            }
+        }
+
+        debug!("Connection pool warmup complete");
+    }
+
+    async fn create_connection(address: &str, config: &PoolConfig) -> Result<PooledConnection> {
+        debug!("Creating new FastCGI connection to {}", address);
+        let stream = if address.starts_with("unix:") {
+            // Unix socket connection
+            let socket_path = address.strip_prefix("unix:").unwrap();
+            let unix_stream = tokio::time::timeout(
+                config.connect_timeout,
+                UnixStream::connect(socket_path)
+            )
+            .await
+            .context("Connection timeout")?
+            .with_context(|| format!("Failed to connect to Unix socket at {}", socket_path))?;
+            FastCgiStream::Unix(unix_stream)
+        } else {
+            // TCP connection with keep-alive
+            let tcp_stream = tokio::time::timeout(
+                config.connect_timeout,
+                TcpStream::connect(address)
+            )
+            .await
+            .context("Connection timeout")?
+            .with_context(|| format!("Failed to connect to FastCGI at {}", address))?;
+
+            // Enable TCP keep-alive for better connection health
+            if config.enable_tcp_keepalive {
+                let sock_ref = socket2::SockRef::from(&tcp_stream);
+                let keepalive = socket2::TcpKeepalive::new()
+                    .with_time(Duration::from_secs(30))
+                    .with_interval(Duration::from_secs(10));
+                sock_ref.set_tcp_keepalive(&keepalive)?;
+            }
+
+            FastCgiStream::Tcp(tcp_stream)
+        };
+
+        Ok(PooledConnection::new(stream))
     }
 
     pub async fn get(&self) -> Result<PooledConnection> {
@@ -144,31 +220,7 @@ impl ConnectionPool {
 
         drop(pool); // Release lock before creating new connection
 
-        debug!("Creating new FastCGI connection to {}", self.address);
-        let stream = if self.address.starts_with("unix:") {
-            // Unix socket connection
-            let socket_path = self.address.strip_prefix("unix:").unwrap();
-            let unix_stream = tokio::time::timeout(
-                self.config.connect_timeout,
-                UnixStream::connect(socket_path)
-            )
-            .await
-            .context("Connection timeout")?
-            .with_context(|| format!("Failed to connect to Unix socket at {}", socket_path))?;
-            FastCgiStream::Unix(unix_stream)
-        } else {
-            // TCP connection
-            let tcp_stream = tokio::time::timeout(
-                self.config.connect_timeout,
-                TcpStream::connect(&self.address)
-            )
-            .await
-            .context("Connection timeout")?
-            .with_context(|| format!("Failed to connect to FastCGI at {}", self.address))?;
-            FastCgiStream::Tcp(tcp_stream)
-        };
-
-        Ok(PooledConnection::new(stream))
+        Self::create_connection(&self.address, &self.config).await
     }
 
     pub async fn put(&self, conn: PooledConnection) {
@@ -241,7 +293,7 @@ mod tests {
             });
 
             let stream = TcpStream::connect(addr).await.unwrap();
-            let conn = PooledConnection::new(stream);
+            let conn = PooledConnection::new(FastCgiStream::Tcp(stream));
 
             assert!(conn.age() < Duration::from_secs(1));
             assert!(conn.idle_time() < Duration::from_secs(1));
