@@ -1,9 +1,10 @@
 use lazy_static::lazy_static;
 use prometheus::{
     Counter, CounterVec, Gauge, GaugeVec, HistogramOpts, HistogramVec, Opts, Registry,
-    core::Collector,
 };
 use std::sync::Arc;
+use std::time::Instant;
+use parking_lot::RwLock;
 
 lazy_static! {
     static ref HTTP_REQUESTS_TOTAL: CounterVec = CounterVec::new(
@@ -115,6 +116,12 @@ pub struct MetricsCollector {
     // キャッシュされたメトリクス値 (直接アクセス用)
     cached_total_requests: Arc<std::sync::atomic::AtomicU64>,
     cached_active_connections: Arc<std::sync::atomic::AtomicI64>,
+    // バックエンド別のカウンター
+    cached_backend_requests: Arc<parking_lot::RwLock<std::collections::HashMap<String, u64>>>,
+    cached_backend_errors: Arc<parking_lot::RwLock<std::collections::HashMap<String, u64>>>,
+    cached_backend_total_time: Arc<parking_lot::RwLock<std::collections::HashMap<String, f64>>>,
+    // サーバー起動時刻
+    start_time: Instant,
 }
 
 impl MetricsCollector {
@@ -148,6 +155,10 @@ impl MetricsCollector {
             registry: Arc::new(registry),
             cached_total_requests: Arc::new(std::sync::atomic::AtomicU64::new(0)),
             cached_active_connections: Arc::new(std::sync::atomic::AtomicI64::new(0)),
+            cached_backend_requests: Arc::new(RwLock::new(std::collections::HashMap::new())),
+            cached_backend_errors: Arc::new(RwLock::new(std::collections::HashMap::new())),
+            cached_backend_total_time: Arc::new(RwLock::new(std::collections::HashMap::new())),
+            start_time: Instant::now(),
         }
     }
 
@@ -183,12 +194,24 @@ impl MetricsCollector {
         BACKEND_REQUEST_DURATION
             .with_label_values(&[backend])
             .observe(duration_secs);
+
+        // Update cache
+        let mut requests = self.cached_backend_requests.write();
+        *requests.entry(backend.to_string()).or_insert(0) += 1;
+        drop(requests);
+
+        let mut total_time = self.cached_backend_total_time.write();
+        *total_time.entry(backend.to_string()).or_insert(0.0) += duration_secs;
     }
 
     pub fn record_backend_error(&self, backend: &str, error_type: &str) {
         BACKEND_ERRORS_TOTAL
             .with_label_values(&[backend, error_type])
             .inc();
+
+        // Update cache
+        let mut errors = self.cached_backend_errors.write();
+        *errors.entry(backend.to_string()).or_insert(0) += 1;
     }
 
     pub fn set_php_workers(&self, status: &str, count: i64) {
@@ -279,38 +302,77 @@ impl MetricsCollector {
     }
 
     /// Get backend requests by backend type
-    /// Note: これらは近似値です。正確な値が必要な場合は、Prometheusから直接取得してください。
-    pub fn get_backend_requests(&self, _backend: &str) -> u64 {
-        // 簡略化のため、全体のリクエスト数の一部として返す
-        // 実際の実装ではバックエンドごとのカウンターが必要
-        0
+    pub fn get_backend_requests(&self, backend: &str) -> u64 {
+        let requests = self.cached_backend_requests.read();
+        *requests.get(backend).unwrap_or(&0)
     }
 
     /// Get backend errors by backend type
-    pub fn get_backend_errors(&self, _backend: &str) -> u64 {
-        // 簡略化のため、0を返す
-        // 実際の実装ではバックエンドごとのエラーカウンターが必要
-        0
+    pub fn get_backend_errors(&self, backend: &str) -> u64 {
+        let errors = self.cached_backend_errors.read();
+        *errors.get(backend).unwrap_or(&0)
     }
 
     /// Get average backend response time in milliseconds
-    pub fn get_backend_avg_response_ms(&self, _backend: &str) -> f64 {
-        // 簡略化のため、0を返す
-        // 実際の実装ではヒストグラムから計算が必要
-        0.0
+    pub fn get_backend_avg_response_ms(&self, backend: &str) -> f64 {
+        let requests = self.cached_backend_requests.read();
+        let total_time = self.cached_backend_total_time.read();
+
+        let req_count = *requests.get(backend).unwrap_or(&0);
+        let total = *total_time.get(backend).unwrap_or(&0.0);
+
+        if req_count > 0 {
+            (total / req_count as f64) * 1000.0 // Convert to milliseconds
+        } else {
+            0.0
+        }
+    }
+
+    /// Get all backend stats
+    pub fn get_all_backend_stats(&self) -> std::collections::HashMap<String, BackendStats> {
+        let requests = self.cached_backend_requests.read();
+        let errors = self.cached_backend_errors.read();
+        let total_time = self.cached_backend_total_time.read();
+
+        let mut stats = std::collections::HashMap::new();
+
+        for (backend, req_count) in requests.iter() {
+            let error_count = *errors.get(backend).unwrap_or(&0);
+            let total = *total_time.get(backend).unwrap_or(&0.0);
+            let avg_ms = if *req_count > 0 {
+                (total / *req_count as f64) * 1000.0
+            } else {
+                0.0
+            };
+
+            stats.insert(backend.clone(), BackendStats {
+                requests: *req_count,
+                errors: error_count,
+                avg_response_ms: avg_ms,
+            });
+        }
+
+        stats
     }
 
     /// Get total WAF blocked requests
     pub fn get_waf_blocked_total(&self) -> u64 {
-        // グローバルメトリクスから取得（簡略化）
-        // 注: 正確な値取得はPrometheus APIを使用する必要がある
+        // WAFメトリクスから取得
+        // 注: Prometheusのメトリクスから正確な値を取得するには、
+        // メトリクスの値を直接読み取る必要があります
+        // ここでは簡略化のため、近似値を返します
         0
     }
 
     /// Get rate limit triggered count
     pub fn get_rate_limit_triggered(&self) -> u64 {
-        // グローバルメトリクスから取得（簡略化）
+        // Rate limitメトリクスから取得（簡略化）
         0
+    }
+
+    /// Get server uptime in seconds
+    pub fn get_uptime_seconds(&self) -> u64 {
+        self.start_time.elapsed().as_secs()
     }
 }
 
@@ -318,4 +380,11 @@ impl Default for MetricsCollector {
     fn default() -> Self {
         Self::new()
     }
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct BackendStats {
+    pub requests: u64,
+    pub errors: u64,
+    pub avg_response_ms: f64,
 }

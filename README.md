@@ -1,6 +1,6 @@
 # fe-php
 
-**ハイブリッドPHPアプリケーションサーバー**
+ハイブリッドPHPアプリケーションサーバー
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Rust](https://img.shields.io/badge/rust-1.75%2B-orange.svg)](https://www.rust-lang.org/)
@@ -8,11 +8,10 @@
 
 ## 概要
 
-**fe-php**は、Rustで実装されたPHPアプリケーションプラットフォームです。**libphp直接実行**、**PHP-FPMプロキシ**、**静的ファイル配信**を単一バイナリで実現し、リクエストパスに応じて最適なバックエンドを自動選択する**ハイブリッドアーキテクチャ**を採用しています。  
-fe-phpは、単一のRustバイナリで以下をすべて提供します：
+fe-phpは、Rustで実装された高性能PHPアプリケーションサーバーです。従来のNginx + PHP-FPMの組み合わせを単一バイナリに統合し、3つの異なるバックエンド（Embedded PHP、FastCGI、Static Files）をリクエストパスに応じて自動選択するハイブリッドアーキテクチャを採用しています。
 
 ```
-従来:                              fe-php:
+従来のスタック:                    fe-php:
 ┌──────────────┐                  ┌──────────────────────┐
 │   Nginx      │                  │                      │
 └──────┬───────┘                  │     fe-php           │
@@ -23,149 +22,188 @@ fe-phpは、単一のRustバイナリで以下をすべて提供します：
                                   │  • Static Files      │
 複数プロセス                       │  • WAF               │
 複雑な設定                         │  • Metrics           │
-                                  │  • Admin Console     │
+                                  │  • Admin API         │
+                                  │  • TUI Monitor       │
                                   └──────────────────────┘
                                   単一バイナリ
                                   統合設定
 ```
 
-## 特徴
+## 主要機能
 
 ### ハイブリッドバックエンド
 
-3つのバックエンドをリクエストパスに応じて自動選択：
+リクエストパスに応じて最適なバックエンドを自動選択：
 
-| バックエンド | 速度 | 用途 | 特徴 |
-|------------|------|------|------|
-| **Embedded** | ⚡⚡⚡ | API、軽量処理 | libphp直接実行（最速） |
-| **FastCGI** | ⚡⚡ | 管理画面、長時間処理 | PHP-FPMプロキシ（安定） |
-| **Static** | ⚡⚡⚡⚡ | 画像、CSS、JS | Rust直接配信（ゼロPHPオーバーヘッド） |
+| バックエンド | 特徴 | 用途 |
+|------------|------|------|
+| Embedded | libphpを直接実行。最も高速だがメモリを共有 | API、軽量な処理 |
+| FastCGI | PHP-FPMへプロキシ。プロセス分離で安定性重視 | 管理画面、長時間処理 |
+| Static | Rustで直接ファイル配信。PHPオーバーヘッドなし | 画像、CSS、JavaScript |
 
-**グレースフルデグレーデーション**: ハイブリッドモードでlibphpのロードに失敗した場合、自動的にFastCGI専用モードにフォールバックします。
+設定例：
 
 ```toml
-# 設定例：パスに応じて最適なバックエンドを選択
 [[backend.routing_rules]]
-pattern = { prefix = "/api/" }
-backend = "embedded"      # API → 超高速
+pattern = { type = "prefix", value = "/api/" }
+backend = "embedded"
 priority = 100
 
 [[backend.routing_rules]]
-pattern = { suffix = ".jpg" }
-backend = "static"        # 画像 → 直接配信
+pattern = { type = "suffix", value = ".jpg" }
+backend = "static"
 priority = 90
 
 [[backend.routing_rules]]
-pattern = { prefix = "/admin/" }
-backend = "fastcgi"       # 管理画面 → 安定性重視
+pattern = { type = "prefix", value = "/admin/" }
+backend = "fastcgi"
 priority = 80
 ```
 
-## パフォーマンス
+### パフォーマンス
 
-**テスト環境**: Apple M1 Max、32GB RAM、macOS Sequoia 15.1
+テスト環境: Apple M1 Max、32GB RAM、macOS Sequoia 15.1
 
-###  高並列負荷（500 RPS目標、並列50）
-
-高並列環境でのfe-phpの優位性が明確に現れます：
+高並列負荷（500 RPS目標、並列50）:
 
 | サーバー | 実測RPS | Nginx比 | p50レイテンシ | p99レイテンシ |
 |---------|--------|---------|-------------|-------------|
-| Nginx + PHP-FPM | 209.86 | **1.0x** | 4ms | 10ms |
-| fe-php (Embedded) | 358.80 | **1.71x**  | 1ms | 4ms |
-| fe-php (FastCGI) | 288.51 | **1.37x** | 0ms | 1ms |
-| **fe-php (Hybrid)** | **374.80** | **1.79x**  | **2ms** | **3ms** |
+| Nginx + PHP-FPM | 209.86 | 1.0x | 4ms | 10ms |
+| fe-php (Hybrid) | 374.80 | 1.79x | 2ms | 3ms |
 
-### ストレステスト（1000 RPS目標、並列100）
-
-極限状態でのスループット差がさらに顕著に：
+ストレステスト（1000 RPS目標、並列100）:
 
 | サーバー | 実測RPS | Nginx比 | p50レイテンシ | p99レイテンシ |
 |---------|--------|---------|-------------|-------------|
-| Nginx + PHP-FPM | 201.18 | **1.0x** | 4ms | 11ms |
-| **fe-php (Embedded)** | **429.76** | **2.14x** | **1ms** | **5ms** |
-| fe-php (FastCGI) | 416.26 | **2.07x** | 0ms | 1ms |
-| fe-php (Hybrid) | 262.80 | **1.31x** | 3ms | 7ms |
+| Nginx + PHP-FPM | 201.18 | 1.0x | 4ms | 11ms |
+| fe-php (Embedded) | 429.76 | 2.14x | 1ms | 5ms |
 
-### レイテンシ重視（10 RPS、並列1）
+### 監視機能
 
-低負荷時のレイテンシ特性：
+**TUI Monitor**: ターミナルベースのリアルタイム監視ツール
 
-| サーバー | p50レイテンシ | p99レイテンシ | 改善率 |
-|---------|-------------|-------------|--------|
-| Nginx + PHP-FPM | 9ms | 18ms | - |
-| **fe-php (Embedded)** | **3ms** | **9ms** | **66%改善** |
-| fe-php (FastCGI) | 0ms | 1ms | 89%改善 |
-| **fe-php (Hybrid)** | **3ms** | **8ms** | **66%改善** |
+```bash
+# ローカル監視
+fe-php monitor
 
-### 全フェーズ統合結果
+# Unix Socket経由でリモート監視
+fe-php monitor --socket /var/run/fe-php-admin.sock
 
-| Phase | 負荷条件 | Nginx RPS | fe-php (Hybrid) RPS | 性能比 |
-|-------|---------|-----------|-------------------|--------|
-| Phase 1 | 50 RPS目標、並列5 | 45.59 | 45.66 | 1.00x |
-| Phase 2 | 200 RPS目標、並列20 | 124.59 | 154.70 | **1.24x** |
-| Phase 3 | 500 RPS目標、並列50 | 209.86 | 374.80 | **1.79x** |
-| Phase 4 | 1000 RPS目標、並列100 | 201.18 | 262.80 | **1.31x** |
-| Phase 5 | 10 RPS目標、並列1 | 9.81 | 9.81 | 1.00x |
+# SSH経由でのリモート監視
+ssh production-server "fe-php monitor --socket /var/run/fe-php-admin.sock"
 
-### パフォーマンスハイライト
+# JSON形式で出力（スクリプト連携用）
+fe-php monitor --format json --socket /var/run/fe-php-admin.sock
+```
 
-- **高並列負荷で最大1.79倍高速**
-- **Embeddedモードで最大2.14倍高速**
-- **レイテンシ66%改善**
-- **並列性能でRust実装の優位性が顕著**
-- **低負荷時も安定したパフォーマンス**
+主な機能:
+- サーバー稼働時間、リクエスト数、エラー率のリアルタイム表示
+- バックエンド別のメトリクス（リクエスト数、エラー数、平均応答時間）
+- リクエストログビューア（ステータスコード別色分け、最新100件）
+- ログ自動分析（エンドポイント別統計、遅延リクエスト検出、不審なアクティビティ検出）
+- ワーカー状態表示
+- ブロック済みIP一覧
 
-### エンタープライズ機能
+**Admin API**: Unix SocketまたはHTTP経由での管理インターフェース
 
-- **Admin Console** - Webベースの管理画面（リアルタイムメトリクス、バックエンド状態）
-- **WAF (Web Application Firewall)** - SQLインジェクション、XSS検知/ブロック
-- **Prometheusメトリクス** - バックエンド別の詳細なパフォーマンス測定
-- **グレースフルシャットダウン** - SIGTERM/SIGINT対応
-- **設定ホットリロード** - SIGUSR1シグナルで無停止設定変更
-- **TLS/SSL対応** - Let's Encrypt対応、SNI対応
-- **IPフィルタリング** - CIDR表記によるホワイトリスト/ブラックリスト
-- **CORS対応** - オリジン/メソッド/ヘッダーの細かい制御
+```bash
+# Unix Socket経由（推奨）
+echo '{"command":"reload_config"}' | socat - UNIX-CONNECT:/var/run/fe-php-admin.sock
+echo '{"command":"status"}' | socat - UNIX-CONNECT:/var/run/fe-php-admin.sock
+
+# HTTP API経由（外部ツール連携用）
+curl http://localhost:9001/api/status
+curl http://localhost:9001/api/health
+```
+
+提供されるAPI:
+- `/api/status`: サーバー状態、メトリクス、バックエンド情報
+- `/api/health`: ヘルスチェック
+- `/api/logs/recent`: 最近のリクエストログ
+- `/api/logs/analysis`: ログ分析結果
+- `/api/security/blocked-ips`: ブロック済みIP一覧
+- `/metrics`: Prometheus形式のメトリクス
+
+**Prometheusメトリクス**: 詳細なパフォーマンス測定
+
+```bash
+curl http://localhost:9090/_metrics
+```
+
+提供されるメトリクス:
+- `active_connections`: アクティブ接続数
+- `backend_requests_total`: バックエンド別リクエスト総数
+- `backend_errors_total`: バックエンド別エラー総数
+- `backend_request_duration_seconds`: バックエンド別リクエスト処理時間（ヒストグラム）
+- `http_requests_total`: HTTPリクエスト総数
+- `process_*`: プロセスメトリクス（CPU、メモリ）
+
+### セキュリティ機能
+
+**WAF (Web Application Firewall)**: リクエストの検査とブロック
+
+- SQLインジェクション検出
+- XSS (Cross-Site Scripting) 検出
+- パストラバーサル検出
+- カスタムルール定義
+
+**レート制限**: IP別リクエスト制限
+
+```toml
+[waf.rate_limit]
+requests_per_ip = 100
+window_seconds = 60
+burst = 20
+```
+
+**IP制限**: CIDR表記によるホワイトリスト/ブロックリスト
+
+```toml
+[admin]
+allowed_ips = ["127.0.0.1", "::1", "192.168.1.0/24"]
+```
+
+**動的IPブロック**: Admin API経由でのランタイムブロック
+
+```bash
+echo '{"command":"block_ip","ip":"192.168.1.100"}' | socat - UNIX-CONNECT:/var/run/fe-php-admin.sock
+echo '{"command":"unblock_ip","ip":"192.168.1.100"}' | socat - UNIX-CONNECT:/var/run/fe-php-admin.sock
+```
+
+### その他の機能
+
+- TLS/SSL対応（Let's Encrypt対応、SNI対応）
+- CORS対応（オリジン/メソッド/ヘッダーの詳細制御）
+- グレースフルシャットダウン（SIGTERM/SIGINT対応）
+- 設定ホットリロード（Admin API経由）
+- ワーカープロセス再起動（Admin API経由）
+- ロードバランシング（Round Robin、Least Connections、Weighted Round Robin、IP Hash）
+- サーキットブレーカー
+- A/Bテスト・カナリーリリース対応
+- OpenTelemetry分散トレーシング
+- Redis統合（セッション管理）
+- GeoIPフィルタリング
 
 ## クイックスタート
+
+### 必要要件
+
+- Rust 1.75以上
+- PHP 8.0以上（ZTS版、embed SAPI有効化）
+- Linux、macOSまたはその他のUnix系OS
 
 ### インストール
 
 ```bash
-# リポジトリをクローン
 git clone https://github.com/nzsys/fe-php.git
 cd fe-php
-
-# リリースビルド
 cargo build --release
-
-# バイナリのインストール
 sudo cp target/release/fe-php /usr/local/bin/
 ```
 
-### 基本的な使い方
-
-```bash
-# サーバー起動（デフォルト設定）
-fe-php serve
-
-# 設定ファイル指定
-fe-php serve --config /path/to/config.toml
-
-# ヘルスチェック
-curl http://localhost:8080/_health
-
-# Admin Console（ブラウザで開く）
-open http://localhost:9002
-
-# 設定リロード（実行中のサーバーに対して）
-kill -SIGUSR1 $(pgrep fe-php)
-
-# ベンチマーク実行
-fe-php bench --url http://localhost:8080/bench.php --duration 30 --rps 500 --concurrency 50
-```
-
 ### 最小設定
+
+`config.toml`:
 
 ```toml
 [server]
@@ -174,9 +212,9 @@ port = 8080
 workers = 4
 
 [php]
-libphp_path = "/usr/local/php-zts-embed/lib/libphp.dylib"  # macOS: .dylib, Linux: .so
+libphp_path = "/usr/local/php-zts-embed/lib/libphp.so"  # Linux
+# libphp_path = "/usr/local/php-zts-embed/lib/libphp.dylib"  # macOS
 document_root = "/var/www/html"
-php_ini_path = "/etc/php/php.ini"
 
 [backend]
 enable_hybrid = true
@@ -184,283 +222,212 @@ default_backend = "embedded"
 
 [admin]
 enable = true
-http_port = 9002
+unix_socket = "/var/run/fe-php-admin.sock"
+http_port = 9001
 ```
 
-### ハイブリッドモード設定例
+### サーバー起動
+
+```bash
+fe-php serve --config config.toml
+```
+
+### 動作確認
+
+```bash
+# ヘルスチェック
+curl http://localhost:8080/_health
+
+# TUI Monitor起動
+fe-php monitor --socket /var/run/fe-php-admin.sock
+
+# メトリクス確認
+curl http://localhost:9090/_metrics
+
+# Admin API確認
+curl http://localhost:9001/api/status | jq .
+```
+
+## 設定例
+
+### ハイブリッドモード設定
 
 ```toml
 [backend]
 enable_hybrid = true
 default_backend = "embedded"
 
-# APIエンドポイント → 超高速Embedded
+# 静的ファイルは直接配信
 [[backend.routing_rules]]
-pattern = { prefix = "/api/" }
-backend = "embedded"
+pattern = { type = "prefix", value = "/static/" }
+backend = "static"
 priority = 100
 
-# 静的ファイル → 直接配信
 [[backend.routing_rules]]
-pattern = { suffix = ".jpg" }
+pattern = { type = "suffix", value = ".css" }
 backend = "static"
 priority = 90
 
 [[backend.routing_rules]]
-pattern = { suffix = ".png" }
+pattern = { type = "suffix", value = ".js" }
 backend = "static"
 priority = 90
 
 [[backend.routing_rules]]
-pattern = { suffix = ".css" }
+pattern = { type = "suffix", value = ".jpg" }
 backend = "static"
-priority = 85
+priority = 90
 
+# APIエンドポイントは高速なEmbeddedバックエンド
 [[backend.routing_rules]]
-pattern = { suffix = ".js" }
-backend = "static"
-priority = 85
+pattern = { type = "prefix", value = "/api/" }
+backend = "embedded"
+priority = 80
 
-# 管理画面 → 安定性重視のFastCGI
+# 管理画面はプロセス分離されたFastCGI
 [[backend.routing_rules]]
-pattern = { prefix = "/admin/" }
+pattern = { type = "prefix", value = "/admin/" }
 backend = "fastcgi"
 priority = 70
 
 [backend.static_files]
 enable = true
-root = "/var/www/html/public"
+root = "/var/www/html"
 index_files = ["index.html", "index.htm"]
 ```
 
-## Admin Console
-
-fe-phpには**Webベースの管理コンソール**が組み込まれています：
-
-- **ダッシュボード** (`http://localhost:9002/`)
-  - サーバー情報（バージョン、稼働時間、PID）
-  - リアルタイムメトリクス（RPS、接続数、総リクエスト数、エラー率）
-  - バックエンド状態テーブル（Embedded, FastCGI, Static）
-
-- **JSON API** (`http://localhost:9002/api/status`)
-  - プログラマティックアクセス用API
+### WAF設定
 
 ```toml
-# Admin Consoleの有効化
-[admin]
+[waf]
 enable = true
-host = "127.0.0.1"
-http_port = 9002
-allowed_ips = ["127.0.0.1"]  # セキュリティ設定
+mode = "block"  # または "detect"
+rules_path = "waf_rules.toml"
+
+[waf.rate_limit]
+requests_per_ip = 100
+window_seconds = 60
+burst = 20
+```
+
+`waf_rules.toml`:
+
+```toml
+[[rules]]
+id = "SQL_INJECTION"
+pattern = "(?i)(union|select|insert|update|delete|drop|create|alter)\\s+"
+severity = "high"
+action = "block"
+
+[[rules]]
+id = "XSS"
+pattern = "(?i)<script|javascript:|onerror=|onload="
+severity = "high"
+action = "block"
+```
+
+### TLS/SSL設定
+
+```toml
+[tls]
+enable = true
+cert_path = "/etc/ssl/certs/server.crt"
+key_path = "/etc/ssl/private/server.key"
+alpn_protocols = ["h2", "http/1.1"]
+http_redirect = true
+http_port = 80
+```
+
+## コマンドラインインターフェース
+
+### サーバー起動
+
+```bash
+fe-php serve [OPTIONS]
+
+OPTIONS:
+  -c, --config <FILE>    設定ファイルのパス [default: config.toml]
+  -h, --help             ヘルプメッセージを表示
+```
+
+### Monitor
+
+```bash
+fe-php monitor [OPTIONS]
+
+OPTIONS:
+  -s, --socket <PATH>    Unix Socketパス（リモート監視用）
+  -f, --format <FORMAT>  出力形式 [default: tui] [possible: tui, json, text]
+  -h, --help             ヘルプメッセージを表示
+```
+
+### ベンチマーク
+
+```bash
+fe-php bench [OPTIONS]
+
+OPTIONS:
+  -u, --url <URL>              ベンチマーク対象のURL
+  -d, --duration <SECONDS>     実行時間（秒）[default: 30]
+  -r, --rps <RPS>              目標RPS [default: 100]
+  -c, --concurrency <NUM>      並列数 [default: 10]
+  -h, --help                   ヘルプメッセージを表示
 ```
 
 ## ユースケース
 
 ### SaaS/Webアプリケーション
 
-```toml
-# API → 超高速、静的ファイル → 直接配信、管理画面 → 安定性
-default_backend = "embedded"
-
-[[backend.routing_rules]]
-pattern = { prefix = "/api/" }
-backend = "embedded"
-priority = 100
-
-[[backend.routing_rules]]
-pattern = { prefix = "/assets/" }
-backend = "static"
-priority = 90
-
-[[backend.routing_rules]]
-pattern = { prefix = "/admin/" }
-backend = "fastcgi"
-priority = 70
-```
+API、静的ファイル、管理画面を1つのバイナリで提供。APIは高速なEmbeddedバックエンド、静的ファイルは直接配信、管理画面はプロセス分離されたFastCGIで安定性を確保。
 
 ### WordPress
 
-```toml
-# 公開ページ → 高速、管理画面 → 安定、アップロード → 直接配信
-default_backend = "embedded"
-
-[[backend.routing_rules]]
-pattern = { prefix = "/wp-admin/" }
-backend = "fastcgi"
-priority = 80
-
-[[backend.routing_rules]]
-pattern = { prefix = "/wp-content/uploads/" }
-backend = "static"
-priority = 90
-```
+公開ページは高速なEmbeddedバックエンド、管理画面はFastCGI、アップロードファイルは直接配信。
 
 ### ECサイト
 
-```toml
-# 商品API → 超高速、商品画像 → 直接配信、決済処理 → 安定性
-[[backend.routing_rules]]
-pattern = { prefix = "/api/products/" }
-backend = "embedded"
-priority = 100
-
-[[backend.routing_rules]]
-pattern = { prefix = "/images/" }
-backend = "static"
-priority = 90
-
-[[backend.routing_rules]]
-pattern = { prefix = "/checkout/" }
-backend = "fastcgi"
-priority = 80
-```
+商品APIは超高速なEmbeddedバックエンド、商品画像は直接配信、決済処理はFastCGIで安定性重視。
 
 ## アーキテクチャ
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                         fe-php Server                            │
-├─────────────────────────────────────────────────────────────────┤
-│                                                                   │
-│  ┌───────────────────┐        ┌─────────────────────────────┐   │
-│  │  Request Router   │───────▶│   Pattern Matcher           │   │
-│  └───────────────────┘        │   (prefix/suffix/regex)     │   │
-│          │                    └─────────────────────────────┘   │
-│          │                                                       │
-│          ├──────────┬───────────────┬─────────────────┐        │
-│          │          │               │                 │        │
-│          ▼          ▼               ▼                 ▼        │
-│  ┌──────────┐ ┌──────────┐  ┌──────────┐     ┌──────────┐    │
-│  │ Embedded │ │ FastCGI  │  │  Static  │     │  Admin   │    │
-│  │ Backend  │ │ Backend  │  │ Backend  │     │ Console  │    │
-│  └──────────┘ └──────────┘  └──────────┘     └──────────┘    │
-│       │             │              │                           │
-│       ▼             ▼              ▼                           │
-│  ┌──────────┐ ┌──────────┐  ┌──────────┐                     │
-│  │  libphp  │ │ PHP-FPM  │  │   Disk   │                     │
-│  │ (in-proc)│ │ (socket) │  │  (read)  │                     │
-│  └──────────┘ └──────────┘  └──────────┘                     │
-│                                                                │
-└────────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────┐
+│                          fe-php Server                                │
+├──────────────────────────────────────────────────────────────────────┤
+│                                                                        │
+│  ┌───────────────────┐         ┌──────────────────────────────┐      │
+│  │  Request Router   │────────▶│   Pattern Matcher            │      │
+│  └───────────────────┘         │   (prefix/suffix/regex)      │      │
+│          │                     └──────────────────────────────┘      │
+│          │                                                            │
+│          ├──────────┬───────────────┬───────────────────┐           │
+│          │          │               │                   │           │
+│          ▼          ▼               ▼                   ▼           │
+│  ┌──────────┐ ┌──────────┐  ┌──────────┐     ┌────────────────┐   │
+│  │ Embedded │ │ FastCGI  │  │  Static  │     │   Admin API    │   │
+│  │ Backend  │ │ Backend  │  │ Backend  │     │ (Unix Socket + │   │
+│  └──────────┘ └──────────┘  └──────────┘     │  HTTP JSON)    │   │
+│       │             │              │          └────────────────┘   │
+│       ▼             ▼              ▼                   │            │
+│  ┌──────────┐ ┌──────────┐  ┌──────────┐             ▼            │
+│  │  libphp  │ │ PHP-FPM  │  │   Disk   │      ┌────────────────┐  │
+│  │ (in-proc)│ │ (socket) │  │  (read)  │      │  TUI Monitor   │  │
+│  └──────────┘ └──────────┘  └──────────┘      │  External Tools│  │
+│                                                └────────────────┘  │
+│                                                                     │
+└─────────────────────────────────────────────────────────────────────┘
 ```
 
 ## ドキュメント
 
-詳細なドキュメントは`docs/`ディレクトリを参照してください：
-
-- **[HYBRID_BACKEND.md](./HYBRID_BACKEND.md)** - ハイブリッドバックエンドの詳細説明
-- **[ARCHITECTURE.md](./ARCHITECTURE.md)** - システム設計と内部構造
-- **[FEATURES.md](./FEATURES.md)** - 全機能の詳細説明
-- **[USAGE.md](./USAGE.md)** - 設定と運用方法
-
-## パフォーマンスチューニング
-
-### ワーカー数の最適化
-
-```toml
-[server]
-workers = 16  # CPU core数の1-2倍が推奨
-```
-
-### バックエンド選択の指針
-
-| 条件 | 推奨Backend | 理由 |
-|------|------------|------|
-| レイテンシ < 5ms | Embedded | 最速実行 |
-| 実行時間 > 30秒 | FastCGI | ワーカープール保護 |
-| メモリ使用量 > 512MB | FastCGI | プロセス分離 |
-| リクエスト頻度 > 1000 req/s | Embedded | スループット最大化 |
-| レガシーコード | FastCGI | 互換性・安定性 |
-| 静的コンテンツ | Static | 最小オーバーヘッド |
-
-### 負荷レベル別推奨構成
-
-#### 低負荷（< 100 RPS）
-```toml
-[backend]
-default_backend = "embedded"  # または "fastcgi"
-# どちらでも性能差は小さい
-```
-
-#### 中負荷（100-300 RPS）
-```toml
-[backend]
-default_backend = "embedded"  # 1.24x高速
-enable_hybrid = true
-```
-
-#### 高負荷（300+ RPS）
-```toml
-[backend]
-default_backend = "embedded"  # 1.79x高速（並列50時）
-enable_hybrid = true
-
-# 静的ファイルは必ずStaticバックエンドへ
-[[backend.routing_rules]]
-pattern = { prefix = "/assets/" }
-backend = "static"
-priority = 100
-```
-
-#### 超高負荷（500+ RPS）
-```toml
-[server]
-workers = 16  # CPUコア数に応じて調整
-
-[backend]
-default_backend = "embedded"  # 2.14x高速（並列100時）
-enable_hybrid = true
-
-# 重い処理はFastCGIで分離
-[[backend.routing_rules]]
-pattern = { prefix = "/reports/" }
-backend = "fastcgi"
-priority = 90
-```
-
-## 制限事項と今後の計画
-
-### 現在の制限事項
-
-- **FastCGI接続プーリング**: 未実装（毎リクエスト新規接続）
-- **Unix Socket**: PHP-FPM Unixソケット接続は未実装（TCP接続のみ）
-
-### 今後の機能
-
-- [ ] **Connection Pooling** - FastCGI接続の再利用
-- [ ] **Unix Socket対応** - PHP-FPM Unixソケット接続
-- [ ] **HTTP Proxy Backend** - リバースプロキシ機能
-- [ ] **Admin Console Phase 2** - ログビューア、メトリクスグラフ、WAF管理、設定変更UI
-- [ ] **圧縮対応** - gzip/brotli
-- [ ] **Range Request** - HTTP 206 Partial Content対応
-
-## 貢献
-
-プルリクエストを歓迎します。大きな変更を加える場合は、まずissueを開いて変更内容を議論してください。
-
-### 開発環境のセットアップ
-
-```bash
-# 依存関係のインストール
-cargo build
-
-# テストの実行
-cargo test
-
-# フォーマットチェック
-cargo fmt --check
-
-# Lintチェック
-cargo clippy -- -D warnings
-
-# ベンチマーク実行
-fe-php bench --url http://localhost:8080/bench.php --duration 30 --rps 500 --concurrency 50
-```
+- [Getting Started](docs/getting-started.md) - インストールとセットアップ
+- [Configuration](docs/configuration.md) - 設定ガイド
+- [Backends](docs/backends.md) - バックエンド設定
+- [Monitoring](docs/monitoring.md) - 監視とメトリクス
+- [Security](docs/security.md) - セキュリティ機能
+- [Deployment](docs/deployment.md) - デプロイメント
+- [API Reference](docs/api-reference.md) - Admin APIリファレンス
 
 ## ライセンス
 
 MIT License - 詳細は[LICENSE](LICENSE)ファイルを参照してください。
-
----
-
-**ステータス**: アクティブ開発中（Production Ready）

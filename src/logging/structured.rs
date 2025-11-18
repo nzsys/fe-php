@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use chrono::{DateTime, Utc};
 use uuid::Uuid;
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct RequestLog {
     pub timestamp: DateTime<Utc>,
     pub level: String,
@@ -49,7 +49,7 @@ impl RequestLog {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct ErrorLog {
     pub timestamp: DateTime<Utc>,
     pub level: String,

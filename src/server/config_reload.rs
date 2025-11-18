@@ -123,7 +123,9 @@ mod tests {
 
     #[test]
     fn test_hot_reload_config() {
-        let config = Config::default();
+        // Load initial valid config from example
+        let config_path = PathBuf::from("config/fe-php.example.toml");
+        let config = Config::from_file(&config_path).expect("Failed to load example config");
         let hot_config = HotReloadConfig::new(config);
 
         // Read config
@@ -138,9 +140,13 @@ mod tests {
 
     #[test]
     fn test_config_reload_file_not_found() {
+        // Load initial valid config from example
+        let config_path = PathBuf::from("config/fe-php.example.toml");
+        let config = Config::from_file(&config_path).expect("Failed to load example config");
+
         let manager = ConfigReloadManager::new(
             PathBuf::from("/nonexistent/config.toml"),
-            Config::default(),
+            config,
         );
 
         // Should fail to reload

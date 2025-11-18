@@ -76,6 +76,7 @@ num_cpus = "1.16"
 libc = "0.2"
 libloading = "0.8"
 sysinfo = "0.30"
+socket2 = "0.5"
 
 # Signal handling
 signal-hook = "0.3"
@@ -132,6 +133,10 @@ ipnetwork = "0.20"
 # Compression
 flate2 = "1.0"
 brotli = "3.4"
+
+# TUI (Terminal User Interface)
+ratatui = "0.26"
+crossterm = "0.27"
 
 [dev-dependencies]
 tempfile = "3.8"

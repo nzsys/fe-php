@@ -30,6 +30,9 @@ enum Commands {
 
     /// WAF management
     Waf(cli::waf::WafArgs),
+
+    /// Monitor server status (TUI/JSON/Text)
+    Monitor(cli::monitor::MonitorArgs),
 }
 
 #[tokio::main]
@@ -43,5 +46,6 @@ async fn main() -> Result<()> {
         Commands::Sandbox(args) => cli::sandbox::run(args).await,
         Commands::Compare(args) => cli::compare::run(args).await,
         Commands::Waf(args) => cli::waf::run(args).await,
+        Commands::Monitor(args) => cli::monitor::run(args).await,
     }
 }

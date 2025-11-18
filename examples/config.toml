@@ -1,0 +1,415 @@
+# fe-php Complete Configuration Example
+# This configuration demonstrates all available features and options
+
+# ==============================================================================
+# Server Configuration
+# ==============================================================================
+[server]
+# Bind address and port
+host = "0.0.0.0"
+port = 8080
+
+# Number of worker threads (defaults to CPU core count)
+workers = 8
+
+# Enable HTTP/2 support (requires TLS)
+enable_http2 = true
+
+# Multi-process mode for CPU-bound workloads
+multi_process = false
+process_count = 4
+
+# Listen type: "tcp" or "unix"
+listen_type = "tcp"
+# unix_socket_path = "/var/run/fe-php.sock"
+
+# ==============================================================================
+# PHP Configuration
+# ==============================================================================
+[php]
+# Path to libphp shared library
+# FreeBSD: /usr/local/lib/libphp.so
+# Debian/Ubuntu: /usr/lib/libphp.so or /usr/lib/x86_64-linux-gnu/libphp.so
+# macOS (from source): /usr/local/php-zts-embed/lib/libphp.dylib
+libphp_path = "/usr/local/lib/libphp.so"
+
+# Document root for PHP scripts
+document_root = "/var/www/html"
+
+# Worker pool size (separate from server workers)
+worker_pool_size = 8
+
+# Maximum requests per worker before recycling (prevents memory leaks)
+worker_max_requests = 10000
+
+# Use PHP-FPM instead of embedded PHP
+use_fpm = false
+fpm_socket = "127.0.0.1:9000"
+
+[php.opcache]
+# Enable OPcache for better performance
+enable = true
+
+# Memory size for OPcache
+memory_size = "256M"
+
+# Maximum number of cached files
+max_files = 10000
+
+# Validate file timestamps (disable in production for better performance)
+validate_timestamps = false
+
+# ==============================================================================
+# Logging Configuration
+# ==============================================================================
+[logging]
+# Log level: trace, debug, info, warn, error
+level = "info"
+
+# Log format: json, text
+format = "json"
+
+# Log output: stdout, stderr, or file path
+output = "stdout"
+
+# ==============================================================================
+# Metrics Configuration
+# ==============================================================================
+[metrics]
+# Enable Prometheus metrics
+enable = true
+
+# Metrics endpoint path
+endpoint = "/_metrics"
+
+# Metrics server port
+port = 9090
+
+# ==============================================================================
+# Web Application Firewall (WAF)
+# ==============================================================================
+[waf]
+# Enable WAF
+enable = true
+
+# WAF mode: off, learn, detect, block
+# - off: WAF disabled
+# - learn: Log suspicious requests
+# - detect: Log but don't block
+# - block: Block malicious requests
+mode = "block"
+
+# Path to WAF rules file
+rules_path = "examples/waf_rules.toml"
+
+[waf.rate_limit]
+# Maximum requests per IP address
+requests_per_ip = 100
+
+# Time window in seconds
+window_seconds = 60
+
+# Burst allowance
+burst = 20
+
+# ==============================================================================
+# Admin API Configuration
+# ==============================================================================
+[admin]
+# Enable admin API
+enable = true
+
+# Admin API host (use 127.0.0.1 for security)
+host = "127.0.0.1"
+
+# Unix socket path for admin commands
+unix_socket = "/var/run/fe-php-admin.sock"
+
+# HTTP port for admin API
+http_port = 9000
+
+# Allowed IP addresses for admin access
+allowed_ips = ["127.0.0.1", "::1"]
+
+# ==============================================================================
+# TLS/SSL Configuration
+# ==============================================================================
+[tls]
+# Enable TLS/SSL
+enable = true
+
+# Path to TLS certificate
+cert_path = "/etc/ssl/certs/server.crt"
+
+# Path to TLS private key
+key_path = "/etc/ssl/private/server.key"
+
+# Path to CA certificate (for client authentication)
+ca_cert_path = "/etc/ssl/certs/ca.crt"
+
+# ALPN protocols
+alpn_protocols = ["h2", "http/1.1"]
+
+# Redirect HTTP to HTTPS
+http_redirect = true
+
+# HTTP port for redirects
+http_port = 80
+
+# ==============================================================================
+# GeoIP Filtering
+# ==============================================================================
+[geoip]
+# Enable GeoIP filtering
+enable = true
+
+# Path to MaxMind GeoIP database
+database_path = "/usr/share/GeoIP/GeoLite2-Country.mmdb"
+
+# Allowed countries (ISO 3166-1 alpha-2 codes)
+allowed_countries = ["JP", "US", "GB"]
+
+# Blocked countries (takes precedence over allowed)
+blocked_countries = ["CN", "RU"]
+
+# ==============================================================================
+# Redis Session Management
+# ==============================================================================
+[redis]
+# Enable Redis for session storage
+enable = true
+
+# Redis connection URL
+url = "redis://127.0.0.1:6379"
+
+# Connection pool size
+pool_size = 20
+
+# Connection timeout in milliseconds
+timeout_ms = 5000
+
+# Key prefix for session keys
+key_prefix = "fe_php:session:"
+
+# ==============================================================================
+# Distributed Tracing (OpenTelemetry)
+# ==============================================================================
+[tracing]
+# Enable distributed tracing
+enable = true
+
+# OTLP endpoint
+otlp_endpoint = "http://localhost:4317"
+
+# Service name for tracing
+service_name = "fe-php-production"
+
+# Sampling rate (0.0 - 1.0)
+# 1.0 = trace all requests, 0.1 = trace 10% of requests
+sample_rate = 0.1
+
+# ==============================================================================
+# Load Balancing Configuration
+# ==============================================================================
+[load_balancing]
+# Enable load balancing
+enable = true
+
+# Load balancing algorithm
+# Options: round_robin, least_conn, weighted_round_robin, ip_hash
+algorithm = "least_conn"
+
+# Upstream servers
+[[load_balancing.upstreams]]
+name = "backend-1"
+url = "http://192.168.1.10:8080"
+weight = 3
+enabled = true
+
+[[load_balancing.upstreams]]
+name = "backend-2"
+url = "http://192.168.1.11:8080"
+weight = 2
+enabled = true
+
+[[load_balancing.upstreams]]
+name = "backend-3"
+url = "http://192.168.1.12:8080"
+weight = 1
+enabled = true
+
+[load_balancing.health_check]
+# Enable health checks
+enable = true
+
+# Health check path
+path = "/_health"
+
+# Health check interval in seconds
+interval_seconds = 30
+
+# Health check timeout in seconds
+timeout_seconds = 5
+
+# Number of consecutive failures before marking unhealthy
+unhealthy_threshold = 3
+
+# Number of consecutive successes before marking healthy
+healthy_threshold = 2
+
+[load_balancing.circuit_breaker]
+# Enable circuit breaker
+enable = true
+
+# Number of failures before opening circuit
+failure_threshold = 5
+
+# Number of successes before closing circuit
+success_threshold = 2
+
+# Timeout in seconds before attempting half-open state
+timeout_seconds = 60
+
+# Maximum requests allowed in half-open state
+half_open_max_requests = 3
+
+# ==============================================================================
+# Deployment Strategies (A/B Testing & Canary Releases)
+# ==============================================================================
+[deployment]
+# Enable deployment strategies
+enable = true
+
+# Deployment strategy: ab_test or canary
+strategy = "canary"
+
+# Enable sticky sessions (user always gets same variant)
+sticky_sessions = true
+
+# Deployment variants
+[[deployment.variants]]
+name = "stable"
+weight = 90
+upstream = "http://stable-backend:8080"
+metrics_tracking = true
+
+[[deployment.variants]]
+name = "canary"
+weight = 10
+upstream = "http://canary-backend:8080"
+metrics_tracking = true
+
+[deployment.ab_test]
+# Track conversion metrics
+track_conversion = true
+
+# Minimum requests per variant before analysis
+min_requests_per_variant = 1000
+
+[deployment.canary]
+# Maximum error rate before rollback (0.05 = 5%)
+max_error_rate = 0.05
+
+# Maximum response time in milliseconds (optional)
+max_response_time_ms = 500
+
+# Minimum observation period in seconds
+min_observation_period_secs = 300
+
+# Minimum requests before making decision
+min_requests_before_decision = 100
+
+# ==============================================================================
+# Backend Configuration (Hybrid Routing)
+# ==============================================================================
+[backend]
+# Enable hybrid backend routing
+enable_hybrid = true
+
+# Default backend: embedded, fastcgi, or static
+default_backend = "embedded"
+
+# Routing rules (evaluated by priority, highest first)
+[[backend.routing_rules]]
+# Serve static images directly
+pattern = { type = "suffix", value = ".jpg" }
+backend = "static"
+priority = 90
+
+[[backend.routing_rules]]
+pattern = { type = "suffix", value = ".png" }
+backend = "static"
+priority = 90
+
+[[backend.routing_rules]]
+pattern = { type = "suffix", value = ".gif" }
+backend = "static"
+priority = 90
+
+[[backend.routing_rules]]
+pattern = { type = "suffix", value = ".css" }
+backend = "static"
+priority = 85
+
+[[backend.routing_rules]]
+pattern = { type = "suffix", value = ".js" }
+backend = "static"
+priority = 85
+
+[[backend.routing_rules]]
+# API endpoints use embedded PHP
+pattern = { type = "prefix", value = "/api/" }
+backend = "embedded"
+priority = 80
+
+[[backend.routing_rules]]
+# Admin uses FastCGI
+pattern = { type = "prefix", value = "/admin/" }
+backend = "fastcgi"
+priority = 75
+
+[[backend.routing_rules]]
+# Regex example: match /user/123
+pattern = { type = "regex", value = "^/user/[0-9]+$" }
+backend = "embedded"
+priority = 70
+
+[[backend.routing_rules]]
+# Exact match example
+pattern = { type = "exact", value = "/status" }
+backend = "embedded"
+priority = 100
+
+[backend.static_files]
+# Enable static file serving
+enable = true
+
+# Static files root directory
+root = "/var/www/html/public"
+
+# Index files (in order of preference)
+index_files = ["index.html", "index.htm", "default.html"]
+
+[backend.connection_pool]
+# Maximum connections in pool
+max_size = 50
+
+# Maximum idle time for connections (seconds)
+max_idle_time_secs = 300
+
+# Maximum lifetime for connections (seconds)
+max_lifetime_secs = 3600
+
+# Connection timeout (seconds)
+connect_timeout_secs = 10
+
+# Enable connection pool metrics
+enable_metrics = true
+
+[backend.connection_pool.circuit_breaker]
+# Circuit breaker for connection pool
+enable = true
+failure_threshold = 10
+success_threshold = 3
+timeout_seconds = 30
+half_open_max_requests = 5

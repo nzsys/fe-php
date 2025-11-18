@@ -4,4 +4,4 @@ pub mod server;
 
 pub use api::AdminApi;
 pub use unix_socket::UnixSocketServer;
-pub use server::start_admin_server;
+pub use server::serve as serve_json_api;

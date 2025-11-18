@@ -169,7 +169,6 @@ impl CompressionConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use hyper::Body;
 
     #[test]
     fn test_should_compress() {
